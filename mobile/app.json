@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "save:on",
+    "slug": "saveon",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yewon.saveon20260918"
+    },
+    "android": {
+      "package": "com.example.saveon"
+    },
+    "plugins": [
+      "expo-font"
+    ]
+  }
+}
