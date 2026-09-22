@@ -1,5 +1,6 @@
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
@@ -12,6 +13,11 @@ from services.youtube_source import (
     download_youtube_video,
     is_youtube_url,
 )
+
+
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 app = FastAPI(

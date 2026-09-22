@@ -1,9 +1,7 @@
 package com.saveon.api.ai;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -16,7 +14,6 @@ import java.nio.charset.StandardCharsets;
 @Component
 public class AiClient {
 
-    private final RestClient restClient;
     private final JsonMapper jsonMapper;
     private final String aiBaseUrl;
 
@@ -28,26 +25,91 @@ public class AiClient {
 
         this.jsonMapper =
                 JsonMapper.builder().build();
-
-        this.restClient =
-                RestClient.builder()
-                        .baseUrl(aiBaseUrl)
-                        .build();
     }
 
     public AiAnalyzeResponse analyze(
             String sourceUrl
     ) {
-        return restClient.post()
-                .uri("/analyze")
-                .contentType(
-                        MediaType.APPLICATION_JSON
-                )
-                .body(
-                        new AiAnalyzeRequest(sourceUrl)
-                )
-                .retrieve()
-                .body(AiAnalyzeResponse.class);
+        HttpURLConnection connection = null;
+
+        try {
+            byte[] requestBody =
+                    jsonMapper.writeValueAsBytes(
+                            new AiAnalyzeRequest(sourceUrl)
+                    );
+
+            connection =
+                    (HttpURLConnection)
+                            URI.create(
+                                    aiBaseUrl + "/analyze"
+                            )
+                            .toURL()
+                            .openConnection();
+
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setConnectTimeout(10_000);
+            connection.setReadTimeout(1_800_000);
+            connection.setRequestProperty(
+                    "Content-Type",
+                    "application/json; charset=UTF-8"
+            );
+            connection.setFixedLengthStreamingMode(
+                    requestBody.length
+            );
+
+            try (
+                    OutputStream output =
+                            connection.getOutputStream()
+            ) {
+                output.write(requestBody);
+                output.flush();
+            }
+
+            int status = connection.getResponseCode();
+            InputStream input =
+                    status >= 200 && status < 300
+                            ? connection.getInputStream()
+                            : connection.getErrorStream();
+
+            String responseBody;
+            if (input != null) {
+                try (input) {
+                    responseBody =
+                            new String(
+                                    input.readAllBytes(),
+                                    StandardCharsets.UTF_8
+                            );
+                }
+            } else {
+                responseBody = "";
+            }
+
+            if (status < 200 || status >= 300) {
+                throw new RuntimeException(
+                        "FastAPI HTTP "
+                                + status
+                                + ": "
+                                + responseBody
+                );
+            }
+
+            return jsonMapper.readValue(
+                    responseBody,
+                    AiAnalyzeResponse.class
+            );
+
+        } catch (Exception e) {
+            throw new RuntimeException(
+                    "FastAPI URL 분석 요청 실패: "
+                            + e.getMessage(),
+                    e
+            );
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
     }
 
     public AiAnalyzeResponse analyzeVideo(

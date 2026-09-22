@@ -70,7 +70,11 @@ def _get_ocr():
     global _OCR_READER
     if _OCR_READER is None:
         import easyocr
-        _OCR_READER = easyocr.Reader(["ko", "en"], gpu=False)
+        _OCR_READER = easyocr.Reader(
+            ["ko", "en"],
+            gpu=False,
+            verbose=False,
+        )
     return _OCR_READER
 
 
