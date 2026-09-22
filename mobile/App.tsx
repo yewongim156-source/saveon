@@ -196,8 +196,12 @@ export default function App() {
       setUrl('');
 
       Alert.alert(
-        '저장 완료',
-        '콘텐츠 저장 및 분석이 완료됐어.',
+        saved.status === 'COMPLETED'
+          ? '저장 및 분석 완료'
+          : '저장 완료 · 분석 확인 필요',
+        saved.status === 'COMPLETED'
+          ? 'YouTube 영상 내용을 분석해 보관함에 정리했어.'
+          : '콘텐츠는 저장했지만 분석하지 못했어. 서버 로그를 확인해줘.',
       );
     } catch (error) {
       console.error('❌ 콘텐츠 저장 오류:', error);

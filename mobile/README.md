@@ -14,7 +14,8 @@
 - 로컬 키워드 검색
 - 반복 등장 엔티티 표시
 - AsyncStorage 기반 로컬 저장
-- 향후 Spring Boot / FastAPI 연동용 API 클라이언트 구조
+- Spring Boot / FastAPI API 클라이언트 연결
+- 공개 YouTube URL의 임시 영상 분석
 
 ## 실행
 
@@ -37,16 +38,15 @@ EXPO_PUBLIC_API_BASE_URL=http://localhost:8080/api/v1
 
 ## 다음 개발 순서
 
-1. Spring Boot `POST /contents` / `GET /contents` 연결
-2. FastAPI 영상 분석 API 구축
-3. STT + OCR + Vision + LLM JSON 구조화
-4. PostgreSQL + pgvector 자연어 검색
-5. Entity 테이블 및 콘텐츠 간 연결
-6. iOS Share Extension / Android Share Intent
-7. 저장 패턴 통계
+1. STT + OCR + Vision 결과의 LLM JSON 구조화
+2. Instagram 입력 어댑터 검토
+3. PostgreSQL + pgvector 자연어 검색
+4. Entity 테이블 및 콘텐츠 간 연결
+5. iOS Share Extension / Android Share Intent
+6. 저장 패턴 통계
 
 ## 주의
 
-현재 URL 저장 시 AI 분석 결과는 데모용 mock 데이터입니다. `src/lib/api.ts`의 API 호출을 실제 백엔드 응답으로 교체하면 됩니다.
+YouTube URL은 FastAPI가 임시 영상을 확보해 분석합니다. Instagram과 일반 웹 URL은 아직 제한된 저장 응답만 제공합니다.
 
 iOS에서 다른 앱의 공유 시트로부터 URL을 받는 기능은 Expo Go만으로 완성되지 않으며 custom development build와 native Share Extension 설정이 필요합니다.

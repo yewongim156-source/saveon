@@ -199,8 +199,9 @@ def build_categories(
     transcript: str,
     ocr_lines: list[str],
     vision_labels: list[str],
+    source_text: str = "",
 ) -> list[str]:
-    text = " ".join([transcript, *ocr_lines]).lower()
+    text = " ".join([source_text, transcript, *ocr_lines]).lower()
     categories: list[str] = []
 
     for category, keywords in CATEGORY_KEYWORDS.items():
@@ -222,8 +223,9 @@ def extract_keywords(
     transcript: str,
     ocr_lines: list[str],
     vision_labels: list[str],
+    source_text: str = "",
 ) -> list[str]:
-    text = " ".join([transcript, *ocr_lines])
+    text = " ".join([source_text, transcript, *ocr_lines])
     words = re.findall(r"[가-힣A-Za-z0-9]{2,}", text)
     normalized = [
         word
@@ -255,7 +257,12 @@ def build_title(
     transcript: str,
     ocr_lines: list[str],
     categories: list[str],
+    source_title: str = "",
 ) -> str:
+    cleaned_source_title = " ".join(source_title.split()).strip()
+    if cleaned_source_title:
+        return cleaned_source_title[:80]
+
     if ocr_lines:
         title = ocr_lines[0][:40]
         if title:
@@ -275,6 +282,8 @@ def build_summary(
     transcript: str,
     ocr_lines: list[str],
     vision_labels: list[str],
+    source_description: str = "",
+    source_channel: str = "",
 ) -> str:
     pieces = []
 
@@ -291,10 +300,18 @@ def build_summary(
         ]
         pieces.append("화면 유형: " + ", ".join(readable))
 
+    cleaned_description = " ".join(source_description.split()).strip()
+    if cleaned_description:
+        pieces.append(f"영상 설명: {cleaned_description[:220]}")
+
+    cleaned_channel = " ".join(source_channel.split()).strip()
+    if cleaned_channel:
+        pieces.append(f"출처 채널: {cleaned_channel[:80]}")
+
     if not pieces:
         return "영상에서 분석 가능한 음성 또는 화면 텍스트를 충분히 찾지 못했습니다."
 
-    return " / ".join(pieces)[:700]
+    return " / ".join(pieces)[:900]
 
 
 def unique_preserve_order(values: Iterable[str]) -> list[str]:
@@ -307,29 +324,60 @@ def unique_preserve_order(values: Iterable[str]) -> list[str]:
     return result
 
 
-def analyze_video_file(video_path: Path) -> dict:
+def analyze_video_file(
+    video_path: Path,
+    *,
+    audio_path: Path | None = None,
+    source_title: str = "",
+    source_description: str = "",
+    source_channel: str = "",
+) -> dict:
     print(f"[VIDEO] 분석 시작: {video_path.name}")
 
-    transcript = transcribe_video(video_path)
+    transcript_source = audio_path or video_path
+    try:
+        transcript = transcribe_video(transcript_source)
+    except Exception as exc:
+        # Silent or video-only sources can still produce useful OCR and visual
+        # results, so lack of a decodable audio track is not fatal.
+        print(f"[AUDIO] 음성 분석 실패 - 화면 분석만 진행: {exc}")
+        transcript = ""
     frames = sample_frames(video_path)
     ocr_lines = run_ocr(frames)
     vision_labels = run_vision(frames)
+
+    source_text = " ".join(
+        [source_title, source_description[:1000]]
+    ).strip()
 
     categories = build_categories(
         transcript,
         ocr_lines,
         vision_labels,
+        source_text,
     )
     keywords = extract_keywords(
         transcript,
         ocr_lines,
         vision_labels,
+        source_text,
     )
     entities = extract_entities(ocr_lines)
 
     result = {
-        "title": build_title(transcript, ocr_lines, categories),
-        "summary": build_summary(transcript, ocr_lines, vision_labels),
+        "title": build_title(
+            transcript,
+            ocr_lines,
+            categories,
+            source_title,
+        ),
+        "summary": build_summary(
+            transcript,
+            ocr_lines,
+            vision_labels,
+            source_description,
+            source_channel,
+        ),
         "categories": categories,
         "keywords": keywords,
         "entities": entities,

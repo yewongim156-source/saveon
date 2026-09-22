@@ -6,6 +6,12 @@ from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from services.video_pipeline import analyze_video_file
+from services.youtube_source import (
+    InvalidYouTubeUrlError,
+    YouTubeDownloadError,
+    download_youtube_video,
+    is_youtube_url,
+)
 
 
 app = FastAPI(
@@ -37,7 +43,8 @@ def health():
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze_url(request: AnalyzeRequest):
-    url = request.sourceUrl.lower()
+    source_url = request.sourceUrl.strip()
+    url = source_url.lower()
 
     if "instagram.com" in url:
         return AnalyzeResponse(
@@ -48,14 +55,38 @@ def analyze_url(request: AnalyzeRequest):
             entities=["Instagram"],
         )
 
-    if "youtube.com" in url or "youtu.be" in url:
-        return AnalyzeResponse(
-            title="YouTube 콘텐츠",
-            summary="YouTube URL이 저장되었습니다. 실제 영상 내용 분석은 영상 업로드 기능에서 수행합니다.",
-            categories=["SNS", "YouTube"],
-            keywords=["YouTube", "Shorts"],
-            entities=["YouTube"],
-        )
+    if is_youtube_url(source_url):
+        with tempfile.TemporaryDirectory(
+            prefix="saveon-youtube-"
+        ) as temp_dir:
+            try:
+                media = download_youtube_video(
+                    source_url,
+                    Path(temp_dir),
+                )
+                result = analyze_video_file(
+                    media.path,
+                    audio_path=media.audio_path,
+                    source_title=media.title,
+                    source_description=media.description,
+                    source_channel=media.channel,
+                )
+                return AnalyzeResponse(**result)
+            except InvalidYouTubeUrlError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=str(exc),
+                ) from exc
+            except YouTubeDownloadError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=str(exc),
+                ) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"YouTube 영상 분석 실패: {exc}",
+                ) from exc
 
     return AnalyzeResponse(
         title="웹 콘텐츠",
