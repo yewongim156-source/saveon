@@ -77,6 +77,9 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<ContentItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [detailReturnTab, setDetailReturnTab] = useState<
+    'home' | 'library' | 'search'
+  >('library');
   const [selectedCategory, setSelectedCategory] = useState('전체');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -199,6 +202,17 @@ export default function App() {
     name: 'home' | 'save' | 'library' | 'search',
   ) {
     setScreen({ name });
+  }
+
+  function openDetail(
+    itemId: string,
+    from: 'home' | 'library' | 'search',
+  ) {
+    setDetailReturnTab(from);
+    setScreen({
+      name: 'detail',
+      itemId,
+    });
   }
 
   async function saveUrl() {
@@ -425,10 +439,7 @@ export default function App() {
             key={item.id}
             item={item}
             onPress={() =>
-              setScreen({
-                name: 'detail',
-                itemId: item.id,
-              })
+              openDetail(item.id, 'home')
             }
           />
         ))}
@@ -629,10 +640,7 @@ export default function App() {
               key={item.id}
               item={item}
               onPress={() =>
-                setScreen({
-                  name: 'detail',
-                  itemId: item.id,
-                })
+                openDetail(item.id, 'library')
               }
             />
           ))
@@ -675,6 +683,19 @@ export default function App() {
             autoCorrect={false}
             style={styles.searchInput}
           />
+
+          {query.length > 0 && (
+            <Pressable
+              onPress={() => setQuery('')}
+              hitSlop={8}
+            >
+              <Ionicons
+                name="close-circle"
+                size={19}
+                color={theme.muted}
+              />
+            </Pressable>
+          )}
         </View>
 
         <Text style={styles.resultText}>
@@ -711,10 +732,7 @@ export default function App() {
               key={item.id}
               item={item}
               onPress={() =>
-                setScreen({
-                  name: 'detail',
-                  itemId: item.id,
-                })
+                openDetail(item.id, 'search')
               }
             />
           ))
@@ -733,7 +751,7 @@ export default function App() {
       <ScrollView contentContainerStyle={styles.page}>
         <Pressable
           style={styles.backButton}
-          onPress={() => goTab('library')}
+          onPress={() => goTab(detailReturnTab)}
         >
           <Ionicons
             name="chevron-back"
@@ -851,7 +869,7 @@ export default function App() {
 
   const activeTab =
     screen.name === 'detail'
-      ? 'library'
+      ? detailReturnTab
       : screen.name;
 
   return (
