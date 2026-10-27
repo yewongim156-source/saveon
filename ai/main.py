@@ -7,6 +7,12 @@ from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from services.video_pipeline import analyze_video_file
+from services.instagram_source import (
+    InstagramDownloadError,
+    InvalidInstagramUrlError,
+    download_instagram_reel,
+    is_instagram_reel_url,
+)
 from services.youtube_source import (
     InvalidYouTubeUrlError,
     YouTubeDownloadError,
@@ -22,7 +28,7 @@ for stream in (sys.stdout, sys.stderr):
 
 app = FastAPI(
     title="SaveOn AI Server",
-    version="2.1.0",
+    version="2.2.0",
 )
 
 
@@ -43,7 +49,7 @@ def health():
     return {
         "status": "ok",
         "service": "saveon-ai",
-        "version": "2.1.0",
+        "version": "2.2.0",
     }
 
 
@@ -52,13 +58,48 @@ def analyze_url(request: AnalyzeRequest):
     source_url = request.sourceUrl.strip()
     url = source_url.lower()
 
+    if is_instagram_reel_url(source_url):
+        with tempfile.TemporaryDirectory(
+            prefix="saveon-instagram-"
+        ) as temp_dir:
+            try:
+                media = download_instagram_reel(
+                    source_url,
+                    Path(temp_dir),
+                )
+
+                result = analyze_video_file(
+                    media.path,
+                    audio_path=media.audio_path,
+                    source_title=media.title,
+                    source_description=media.description,
+                    source_channel=media.channel,
+                )
+
+                return AnalyzeResponse(**result)
+
+            except InvalidInstagramUrlError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=str(exc),
+                ) from exc
+
+            except InstagramDownloadError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=str(exc),
+                ) from exc
+
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Instagram 릴스 분석 실패: {exc}",
+                ) from exc
+
     if "instagram.com" in url:
-        return AnalyzeResponse(
-            title="Instagram 콘텐츠",
-            summary="Instagram URL이 저장되었습니다. 실제 영상 내용 분석은 영상 업로드 기능에서 수행합니다.",
-            categories=["SNS", "Instagram"],
-            keywords=["Instagram", "릴스"],
-            entities=["Instagram"],
+        raise HTTPException(
+            status_code=400,
+            detail="현재는 Instagram Reel URL만 지원합니다.",
         )
 
     if is_youtube_url(source_url):
