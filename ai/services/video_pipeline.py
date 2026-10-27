@@ -11,6 +11,11 @@ import numpy as np
 from PIL import Image
 
 
+from services.llm_postprocessor import (
+    postprocess_with_llm,
+)
+
+
 _WHISPER_MODEL = None
 _OCR_READER = None
 _CLIP_MODEL = None
@@ -368,7 +373,7 @@ def analyze_video_file(
     )
     entities = extract_entities(ocr_lines)
 
-    result = {
+    fallback_result = {
         "title": build_title(
             transcript,
             ocr_lines,
@@ -386,6 +391,61 @@ def analyze_video_file(
         "keywords": keywords,
         "entities": entities,
     }
+
+    # YouTube 원본 메타데이터도 Gemini가 참고할 수 있도록
+    # 분석 문맥에 함께 포함한다.
+    llm_context_parts = []
+
+    if source_title:
+        llm_context_parts.append(
+            f"원본 영상 제목: {source_title}"
+        )
+
+    if source_description:
+        llm_context_parts.append(
+            "원본 영상 설명: "
+            + source_description[:1200]
+        )
+
+    if source_channel:
+        llm_context_parts.append(
+            f"출처 채널: {source_channel}"
+        )
+
+    if transcript:
+        llm_context_parts.append(
+            f"영상 음성 내용: {transcript}"
+        )
+
+    llm_transcript = "\n".join(llm_context_parts)
+
+    try:
+        result = postprocess_with_llm(
+            transcript=llm_transcript,
+            ocr_lines=ocr_lines,
+            vision_labels=vision_labels,
+        )
+
+        # 혹시 Gemini가 특정 필드를 비워 반환하면
+        # 기존 멀티모달 분석 결과로 보완한다.
+        for key in (
+            "title",
+            "summary",
+            "categories",
+            "keywords",
+            "entities",
+        ):
+            if not result.get(key):
+                result[key] = fallback_result[key]
+
+        print("[VIDEO] Gemini 후처리 사용")
+
+    except Exception as exc:
+        print(
+            "[LLM] Gemini 후처리 실패 "
+            f"- fallback 사용: {exc}"
+        )
+        result = fallback_result
 
     print("[VIDEO] 분석 완료")
     print(f"[VIDEO] transcript={transcript[:120]}")
