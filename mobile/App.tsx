@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Linking,
   Pressable,
@@ -22,6 +23,7 @@ import {
   ApiContent,
   createContent,
   getContents,
+  searchContents,
   uploadVideo,
 } from './src/lib/api';
 
@@ -72,6 +74,9 @@ export default function App() {
   const [contents, setContents] = useState<ContentItem[]>([]);
   const [url, setUrl] = useState('');
   const [query, setQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<ContentItem[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState('전체');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -79,6 +84,51 @@ export default function App() {
   useEffect(() => {
     loadContents();
   }, []);
+
+  useEffect(() => {
+    if (screen.name !== 'search') return;
+
+    const searchTerm = query.trim();
+
+    if (!searchTerm) {
+      setSearchResults(contents);
+      setSearchError(null);
+      setSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSearching(true);
+    setSearchError(null);
+
+    const timeoutId = setTimeout(async () => {
+      try {
+        const data = await searchContents(searchTerm);
+
+        if (!cancelled) {
+          setSearchResults(data.map(toContentItem));
+        }
+      } catch (error) {
+        console.error('❌ 콘텐츠 검색 오류:', error);
+
+        if (!cancelled) {
+          setSearchResults([]);
+          setSearchError(
+            '검색 서버에 연결하지 못했어. 잠시 후 다시 시도해줘.',
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setSearching(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [contents, query, screen.name]);
 
   async function loadContents() {
     console.log('🔄 콘텐츠 조회 시작');
@@ -139,28 +189,10 @@ export default function App() {
     );
   }, [contents, selectedCategory]);
 
-  const searchResults = useMemo(() => {
-    const q = query.trim().toLowerCase();
-
-    if (!q) return contents;
-
-    return contents.filter((item) =>
-      [
-        item.title,
-        item.summary,
-        ...item.category,
-        ...item.keywords,
-        ...item.entities,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [contents, query]);
-
   const detailItem =
     screen.name === 'detail'
-      ? contents.find((item) => item.id === screen.itemId)
+      ? contents.find((item) => item.id === screen.itemId) ??
+        searchResults.find((item) => item.id === screen.itemId)
       : undefined;
 
   function goTab(
@@ -623,8 +655,8 @@ export default function App() {
         </Text>
 
         <Text style={styles.bodyText}>
-          현재는 제목·요약·카테고리·키워드·엔티티를
-          기준으로 검색해.
+          서버에 저장된 제목·요약·카테고리·키워드·엔티티를
+          한 번에 검색해.
         </Text>
 
         <View style={styles.searchBox}>
@@ -639,26 +671,54 @@ export default function App() {
             onChangeText={setQuery}
             placeholder="예: 카페, 여행, 메이크업"
             placeholderTextColor="#A7ABB4"
+            returnKeyType="search"
+            autoCorrect={false}
             style={styles.searchInput}
           />
         </View>
 
         <Text style={styles.resultText}>
-          {searchResults.length}개 결과
+          {searching
+            ? '검색 중...'
+            : `${searchResults.length}개 결과`}
         </Text>
 
-        {searchResults.map((item) => (
-          <ContentCard
-            key={item.id}
-            item={item}
-            onPress={() =>
-              setScreen({
-                name: 'detail',
-                itemId: item.id,
-              })
-            }
-          />
-        ))}
+        {searching ? (
+          <View style={styles.searchState}>
+            <ActivityIndicator
+              size="small"
+              color={theme.primary}
+            />
+            <Text style={styles.searchStateText}>
+              서버에서 검색하고 있어.
+            </Text>
+          </View>
+        ) : searchError ? (
+          <View style={styles.emptyBox}>
+            <Text style={styles.emptyText}>
+              {searchError}
+            </Text>
+          </View>
+        ) : searchResults.length === 0 ? (
+          <View style={styles.emptyBox}>
+            <Text style={styles.emptyText}>
+              일치하는 콘텐츠가 없어요.
+            </Text>
+          </View>
+        ) : (
+          searchResults.map((item) => (
+            <ContentCard
+              key={item.id}
+              item={item}
+              onPress={() =>
+                setScreen({
+                  name: 'detail',
+                  itemId: item.id,
+                })
+              }
+            />
+          ))
+        )}
       </ScrollView>
     );
   }
@@ -1050,6 +1110,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 14,
     marginBottom: 10,
+  },
+  searchState: {
+    minHeight: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  searchStateText: {
+    color: theme.muted,
+    fontSize: 13,
   },
   backButton: {
     flexDirection: 'row',

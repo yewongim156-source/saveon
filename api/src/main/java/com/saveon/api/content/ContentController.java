@@ -19,8 +19,10 @@ public class ContentController {
     public ContentController(
             ContentService contentService
     ) {
-        this.contentService = contentService;
+        this.contentService =
+                contentService;
     }
+
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -29,37 +31,64 @@ public class ContentController {
             @RequestBody
             CreateContentRequest request
     ) {
-        return contentService.create(request);
+        return contentService.create(
+                request
+        );
     }
+
 
     @PostMapping(
             value = "/upload",
-            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+            consumes =
+                    MediaType.MULTIPART_FORM_DATA_VALUE
     )
     @ResponseStatus(HttpStatus.CREATED)
     public Content uploadVideo(
             @RequestPart("file")
             MultipartFile file
     ) {
-        return contentService.createFromVideo(file);
+        return contentService
+                .createFromVideo(file);
     }
+
 
     @GetMapping
     public List<Content> findAll() {
         return contentService.findAll();
     }
 
+
+    @GetMapping("/search")
+    public List<Content> search(
+            @RequestParam(
+                    name = "q",
+                    defaultValue = ""
+            )
+            String query
+    ) {
+        return contentService.search(
+                query
+        );
+    }
+
+
     @GetMapping("/{id}")
     public Content findById(
-            @PathVariable Long id
+            @PathVariable
+            Long id
     ) {
-        return contentService.findById(id);
+        return contentService.findById(
+                id
+        );
     }
+
 
     @PostMapping("/{id}/analyze")
     public Content analyze(
-            @PathVariable Long id
+            @PathVariable
+            Long id
     ) {
-        return contentService.analyzeById(id);
+        return contentService
+                .analyzeById(id);
     }
 }

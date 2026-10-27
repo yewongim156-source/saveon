@@ -18,9 +18,13 @@ public class ContentService {
             ContentRepository contentRepository,
             AiClient aiClient
     ) {
-        this.contentRepository = contentRepository;
-        this.aiClient = aiClient;
+        this.contentRepository =
+                contentRepository;
+
+        this.aiClient =
+                aiClient;
     }
+
 
     public Content create(
             CreateContentRequest request
@@ -32,10 +36,13 @@ public class ContentService {
                 );
 
         content =
-                contentRepository.save(content);
+                contentRepository.save(
+                        content
+                );
 
         return analyze(content);
     }
+
 
     public Content createFromVideo(
             MultipartFile file
@@ -52,16 +59,22 @@ public class ContentService {
                 );
 
         content =
-                contentRepository.save(content);
+                contentRepository.save(
+                        content
+                );
 
         try {
             content.startAnalysis();
 
             content =
-                    contentRepository.save(content);
+                    contentRepository.save(
+                            content
+                    );
 
             AiAnalyzeResponse result =
-                    aiClient.analyzeVideo(file);
+                    aiClient.analyzeVideo(
+                            file
+                    );
 
             if (result == null) {
                 throw new IllegalStateException(
@@ -87,8 +100,11 @@ public class ContentService {
             content.failAnalysis();
         }
 
-        return contentRepository.save(content);
+        return contentRepository.save(
+                content
+        );
     }
+
 
     public Content analyze(
             Content content
@@ -97,7 +113,9 @@ public class ContentService {
             content.startAnalysis();
 
             content =
-                    contentRepository.save(content);
+                    contentRepository.save(
+                            content
+                    );
 
             AiAnalyzeResponse result =
                     aiClient.analyze(
@@ -128,8 +146,11 @@ public class ContentService {
             content.failAnalysis();
         }
 
-        return contentRepository.save(content);
+        return contentRepository.save(
+                content
+        );
     }
+
 
     public Content analyzeById(
             Long id
@@ -140,9 +161,31 @@ public class ContentService {
         return analyze(content);
     }
 
+
     public List<Content> findAll() {
         return contentRepository.findAll();
     }
+
+
+    public List<Content> search(
+            String query
+    ) {
+        if (query == null) {
+            return findAll();
+        }
+
+        String searchTerm =
+                query.trim();
+
+        if (searchTerm.isEmpty()) {
+            return findAll();
+        }
+
+        return contentRepository.search(
+                searchTerm
+        );
+    }
+
 
     public Content findById(
             Long id

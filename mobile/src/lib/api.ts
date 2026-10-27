@@ -72,4 +72,19 @@ export async function getContents(): Promise<ApiContent[]> {
   return response.json();
 }
 
+export async function searchContents(
+  query: string,
+): Promise<ApiContent[]> {
+  const searchTerm = encodeURIComponent(query.trim());
+  const response = await fetch(
+    `${API_BASE_URL}/contents/search?q=${searchTerm}`,
+  );
+
+  if (!response.ok) {
+    throw new Error(`콘텐츠 검색 실패: HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
 export { API_BASE_URL };
