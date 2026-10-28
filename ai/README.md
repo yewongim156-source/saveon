@@ -41,6 +41,7 @@ waits until analysis finishes.
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Semantic-search embedding model |
 | `GEMINI_EMBEDDING_DIMENSIONS` | `768` | Must match the pgvector column |
 | `FACT_CHECK_ENABLED` | `false` | Enable search-grounded claim verification |
+| `GEMINI_VERIFIED_SUMMARY_MODEL` | `GEMINI_MODEL` | Rewrites the final summary from fact-check evidence |
 | `MAX_FACT_CHECK_CLAIMS` | `3` | Maximum claims verified per content |
 
 ## Run

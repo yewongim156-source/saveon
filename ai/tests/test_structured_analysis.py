@@ -1,7 +1,13 @@
 import unittest
+from unittest.mock import patch
 
 from services.embedding_service import _normalize
 from services.llm_postprocessor import _normalize_result
+from services.verified_summary import (
+    _compact_fact_checks,
+    _verification_status,
+    apply_verified_summary,
+)
 
 
 class StructuredAnalysisTests(unittest.TestCase):
@@ -61,6 +67,81 @@ class StructuredAnalysisTests(unittest.TestCase):
         vector = _normalize([3.0, 4.0])
         self.assertAlmostEqual(vector[0], 0.6)
         self.assertAlmostEqual(vector[1], 0.8)
+
+    def test_verification_status_requires_enabled_fact_checking(self):
+        structured = {
+            "claims": [{"verifiable": True}],
+            "factChecks": [{"verdict": "SUPPORTED"}],
+        }
+
+        with patch(
+            "services.verified_summary.FACT_CHECK_ENABLED",
+            False,
+        ):
+            self.assertEqual(
+                _verification_status(structured),
+                "NOT_RUN",
+            )
+
+        with patch(
+            "services.verified_summary.FACT_CHECK_ENABLED",
+            True,
+        ):
+            self.assertEqual(
+                _verification_status(structured),
+                "VERIFIED",
+            )
+
+    def test_compacts_sources_without_losing_fact_check_index(self):
+        compact = _compact_fact_checks({
+            "factChecks": [
+                {
+                    "claim": "행사는 5월 1일 열린다",
+                    "verdict": "SUPPORTED",
+                    "explanation": "공식 일정과 일치한다.",
+                    "sources": [
+                        {
+                            "title": "공식 일정",
+                            "url": "https://example.com/event",
+                        }
+                    ],
+                }
+            ]
+        })
+
+        self.assertEqual(compact[0]["factCheckIndex"], 0)
+        self.assertEqual(
+            compact[0]["sources"][0]["url"],
+            "https://example.com/event",
+        )
+
+    def test_keeps_raw_summary_when_verification_did_not_run(self):
+        result = {
+            "summary": "영상에서 소개한 원래 요약",
+            "structured": {
+                "claims": [],
+                "factChecks": [],
+            },
+        }
+
+        with patch(
+            "services.verified_summary.FACT_CHECK_ENABLED",
+            False,
+        ):
+            finalized = apply_verified_summary(result)
+
+        self.assertEqual(
+            finalized["summary"],
+            "영상에서 소개한 원래 요약",
+        )
+        self.assertEqual(
+            finalized["structured"]["verificationStatus"],
+            "NOT_RUN",
+        )
+        self.assertEqual(
+            finalized["structured"]["summarySource"],
+            "RAW_ANALYSIS",
+        )
 
 
 if __name__ == "__main__":

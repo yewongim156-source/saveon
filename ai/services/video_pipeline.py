@@ -15,6 +15,7 @@ from services.llm_postprocessor import (
     postprocess_with_llm,
 )
 from services.fact_verifier import verify_structured_claims
+from services.verified_summary import apply_verified_summary
 
 
 _WHISPER_MODEL = None
@@ -489,6 +490,7 @@ def analyze_video_file(
     result["structured"] = verify_structured_claims(
         result.get("structured", {})
     )
+    result = apply_verified_summary(result)
 
     print("[VIDEO] 분석 완료")
     print(f"[VIDEO] transcript={transcript[:120]}")
