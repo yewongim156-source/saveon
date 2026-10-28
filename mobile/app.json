@@ -7,13 +7,40 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.yewon.saveon20260918"
+      "bundleIdentifier": "com.yewon.saveon20260918",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "개발 중 save:on 로컬 서버에 연결하기 위해 사용합니다.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
     },
     "android": {
       "package": "com.example.saveon"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      [
+        "expo-share-extension",
+        {
+          "activationRules": [
+            {
+              "type": "text"
+            },
+            {
+              "type": "url",
+              "max": 1
+            }
+          ],
+          "height": 330,
+          "backgroundColor": {
+            "red": 246,
+            "green": 245,
+            "blue": 250,
+            "alpha": 1
+          }
+        }
+      ]
     ]
   }
 }

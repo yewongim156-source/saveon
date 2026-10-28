@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-               BuildableName = "SaveOn.app"
-               BlueprintName = "SaveOn"
-               ReferencedContainer = "container:SaveOn.xcodeproj">
+               BuildableName = "saveon.app"
+               BlueprintName = "saveon"
+               ReferencedContainer = "container:saveon.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -33,9 +33,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "00E356ED1AD99517003FC87E"
-               BuildableName = "SaveOnTests.xctest"
-               BlueprintName = "SaveOnTests"
-               ReferencedContainer = "container:SaveOn.xcodeproj">
+               BuildableName = "saveonTests.xctest"
+               BlueprintName = "saveonTests"
+               ReferencedContainer = "container:saveon.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -55,9 +55,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-            BuildableName = "SaveOn.app"
-            BlueprintName = "SaveOn"
-            ReferencedContainer = "container:SaveOn.xcodeproj">
+            BuildableName = "saveon.app"
+            BlueprintName = "saveon"
+            ReferencedContainer = "container:saveon.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -72,9 +72,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-            BuildableName = "SaveOn.app"
-            BlueprintName = "SaveOn"
-            ReferencedContainer = "container:SaveOn.xcodeproj">
+            BuildableName = "saveon.app"
+            BlueprintName = "saveon"
+            ReferencedContainer = "container:saveon.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

@@ -13,16 +13,21 @@ public class ContentService {
 
     private final ContentRepository contentRepository;
     private final AiClient aiClient;
+    private final ContentAnalysisWorker contentAnalysisWorker;
 
     public ContentService(
             ContentRepository contentRepository,
-            AiClient aiClient
+            AiClient aiClient,
+            ContentAnalysisWorker contentAnalysisWorker
     ) {
         this.contentRepository =
                 contentRepository;
 
         this.aiClient =
                 aiClient;
+
+        this.contentAnalysisWorker =
+                contentAnalysisWorker;
     }
 
 
@@ -35,12 +40,18 @@ public class ContentService {
                         request.platform()
                 );
 
+        content.startAnalysis();
+
         content =
                 contentRepository.save(
                         content
                 );
 
-        return analyze(content);
+        contentAnalysisWorker.analyzeUrl(
+                content.getId()
+        );
+
+        return content;
     }
 
 
@@ -109,46 +120,18 @@ public class ContentService {
     public Content analyze(
             Content content
     ) {
-        try {
-            content.startAnalysis();
+        content.startAnalysis();
 
-            content =
-                    contentRepository.save(
-                            content
-                    );
-
-            AiAnalyzeResponse result =
-                    aiClient.analyze(
-                            content.getSourceUrl()
-                    );
-
-            if (result == null) {
-                throw new IllegalStateException(
-                        "AI 서버 응답이 비어 있습니다."
+        content =
+                contentRepository.save(
+                        content
                 );
-            }
 
-            content.completeAnalysis(
-                    result.title(),
-                    result.summary(),
-                    result.categories(),
-                    result.keywords(),
-                    result.entities()
-            );
-
-        } catch (Exception e) {
-
-            System.err.println(
-                    "AI 분석 실패: "
-                            + e.getMessage()
-            );
-
-            content.failAnalysis();
-        }
-
-        return contentRepository.save(
-                content
+        contentAnalysisWorker.analyzeUrl(
+                content.getId()
         );
+
+        return content;
     }
 
 

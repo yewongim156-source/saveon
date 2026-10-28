@@ -89,6 +89,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const hasAnalyzingContent =
+      contents.some((item) =>
+        item.category.includes('분석중') ||
+        item.category.includes('분석대기'),
+      );
+
+    if (!hasAnalyzingContent) return;
+
+    const intervalId = setInterval(() => {
+      loadContents(true);
+    }, 4000);
+
+    return () => clearInterval(intervalId);
+  }, [contents]);
+
+  useEffect(() => {
     if (screen.name !== 'search') return;
 
     const searchTerm = query.trim();
@@ -133,11 +149,11 @@ export default function App() {
     };
   }, [contents, query, screen.name]);
 
-  async function loadContents() {
+  async function loadContents(silent = false) {
     console.log('🔄 콘텐츠 조회 시작');
 
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const data = await getContents();
 
       console.log('✅ 서버 응답:', data);
@@ -152,12 +168,14 @@ export default function App() {
     } catch (error) {
       console.error('❌ 콘텐츠 조회 오류:', error);
 
-      Alert.alert(
-        '서버 연결 실패',
-        'Spring Boot 서버가 실행 중인지 확인해줘.',
-      );
+      if (!silent) {
+        Alert.alert(
+          '서버 연결 실패',
+          'Spring Boot 서버가 실행 중인지 확인해줘.',
+        );
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
@@ -242,12 +260,8 @@ export default function App() {
       setUrl('');
 
       Alert.alert(
-        saved.status === 'COMPLETED'
-          ? '저장 및 분석 완료'
-          : '저장 완료 · 분석 확인 필요',
-        saved.status === 'COMPLETED'
-          ? 'YouTube 영상 내용을 분석해 보관함에 정리했어.'
-          : '콘텐츠는 저장했지만 분석하지 못했어. 서버 로그를 확인해줘.',
+        '저장 완료 · AI 분석 중',
+        '콘텐츠는 바로 저장됐어. AI 분석은 뒤에서 계속 진행돼.',
       );
     } catch (error) {
       console.error('❌ 콘텐츠 저장 오류:', error);
@@ -501,7 +515,7 @@ export default function App() {
             />
 
             <Text style={styles.primaryButtonText}>
-              {loading ? '처리 중...' : '저장'}
+              {loading ? '저장 중...' : '저장'}
             </Text>
           </Pressable>
         </View>
