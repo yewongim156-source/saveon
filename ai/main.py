@@ -4,8 +4,9 @@ import sys
 import tempfile
 
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from services.embedding_service import embed_text
 from services.video_pipeline import analyze_video_file
 from services.instagram_source import (
     InstagramDownloadError,
@@ -42,6 +43,17 @@ class AnalyzeResponse(BaseModel):
     categories: list[str]
     keywords: list[str]
     entities: list[str]
+    structured: dict = Field(default_factory=dict)
+
+
+class EmbedRequest(BaseModel):
+    text: str
+
+
+class EmbedResponse(BaseModel):
+    model: str
+    dimensions: int
+    vector: list[float]
 
 
 @app.get("/health")
@@ -51,6 +63,21 @@ def health():
         "service": "saveon-ai",
         "version": "2.2.0",
     }
+
+
+@app.post("/embed", response_model=EmbedResponse)
+def create_embedding(request: EmbedRequest):
+    try:
+        return EmbedResponse(**embed_text(request.text))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"임베딩 생성 실패: {exc}",
+        ) from exc
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
@@ -141,6 +168,7 @@ def analyze_url(request: AnalyzeRequest):
         categories=["Web"],
         keywords=["웹 콘텐츠"],
         entities=[],
+        structured={},
     )
 
 

@@ -14,6 +14,7 @@ from PIL import Image
 from services.llm_postprocessor import (
     postprocess_with_llm,
 )
+from services.fact_verifier import verify_structured_claims
 
 
 _WHISPER_MODEL = None
@@ -49,6 +50,20 @@ VISION_TO_CATEGORY = {
     "study": "공부",
     "fitness": "운동",
     "daily life": "생활",
+}
+
+LEGACY_CATEGORY_TO_PRIMARY = {
+    "맛집": "음식/레시피",
+    "카페": "음식/레시피",
+    "여행": "장소/여행",
+    "뷰티": "뷰티/패션",
+    "쇼핑": "제품/쇼핑",
+    "패션": "뷰티/패션",
+    "공부": "학습/커리어",
+    "기술": "생활정보",
+    "운동": "건강/운동",
+    "생활": "생활정보",
+    "영상": "기타",
 }
 
 STOPWORDS = {
@@ -373,6 +388,13 @@ def analyze_video_file(
     )
     entities = extract_entities(ocr_lines)
 
+    fallback_primary_category = "기타"
+    for category in categories:
+        mapped = LEGACY_CATEGORY_TO_PRIMARY.get(category)
+        if mapped:
+            fallback_primary_category = mapped
+            break
+
     fallback_result = {
         "title": build_title(
             transcript,
@@ -390,6 +412,22 @@ def analyze_video_file(
         "categories": categories,
         "keywords": keywords,
         "entities": entities,
+        "structured": {
+            "primaryCategory": fallback_primary_category,
+            "secondaryCategories": categories[:3],
+            "tags": keywords[:8],
+            "contentType": "OTHER",
+            "entityDetails": [
+                {
+                    "name": entity,
+                    "type": "OTHER",
+                    "confidence": 0.0,
+                }
+                for entity in entities
+            ],
+            "claims": [],
+            "factChecks": [],
+        },
     }
 
     # YouTube 원본 메타데이터도 Gemini가 참고할 수 있도록
@@ -434,6 +472,7 @@ def analyze_video_file(
             "categories",
             "keywords",
             "entities",
+            "structured",
         ):
             if not result.get(key):
                 result[key] = fallback_result[key]
@@ -446,6 +485,10 @@ def analyze_video_file(
             f"- fallback 사용: {exc}"
         )
         result = fallback_result
+
+    result["structured"] = verify_structured_claims(
+        result.get("structured", {})
+    )
 
     print("[VIDEO] 분석 완료")
     print(f"[VIDEO] transcript={transcript[:120]}")

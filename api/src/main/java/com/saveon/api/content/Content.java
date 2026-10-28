@@ -1,6 +1,9 @@
 package com.saveon.api.content;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.Array;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -34,6 +37,20 @@ public class Content {
     private LocalDateTime createdAt;
 
     private LocalDateTime analyzedAt;
+
+    @Column(name = "structured_analysis", columnDefinition = "TEXT")
+    private String structuredAnalysis;
+
+    @Column(name = "embedding_model")
+    private String embeddingModel;
+
+    @Column(name = "embedding_text", columnDefinition = "TEXT")
+    private String embeddingText;
+
+    @JdbcTypeCode(SqlTypes.VECTOR)
+    @Array(length = 768)
+    @Column(columnDefinition = "vector(768)")
+    private float[] embedding;
 
 
     @ElementCollection(fetch = FetchType.EAGER)
@@ -88,7 +105,8 @@ public class Content {
             String summary,
             List<String> categories,
             List<String> keywords,
-            List<String> entities
+            List<String> entities,
+            String structuredAnalysis
     ) {
         this.title = title;
         this.summary = summary;
@@ -102,6 +120,8 @@ public class Content {
         this.entities.clear();
         this.entities.addAll(entities);
 
+        this.structuredAnalysis = structuredAnalysis;
+
         this.status = ContentStatus.COMPLETED;
         this.analyzedAt = LocalDateTime.now();
     }
@@ -110,6 +130,17 @@ public class Content {
     public void failAnalysis() {
         this.status = ContentStatus.FAILED;
         this.analyzedAt = LocalDateTime.now();
+    }
+
+
+    public void setEmbedding(
+            float[] embedding,
+            String embeddingModel,
+            String embeddingText
+    ) {
+        this.embedding = embedding;
+        this.embeddingModel = embeddingModel;
+        this.embeddingText = embeddingText;
     }
 
 
@@ -143,6 +174,10 @@ public class Content {
 
     public LocalDateTime getAnalyzedAt() {
         return analyzedAt;
+    }
+
+    public String getStructuredAnalysis() {
+        return structuredAnalysis;
     }
 
     public List<String> getCategories() {

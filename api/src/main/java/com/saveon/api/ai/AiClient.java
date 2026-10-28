@@ -112,6 +112,102 @@ public class AiClient {
         }
     }
 
+    public AiEmbedResponse embed(
+            String text
+    ) {
+        HttpURLConnection connection = null;
+
+        try {
+            byte[] requestBody =
+                    jsonMapper.writeValueAsBytes(
+                            new AiEmbedRequest(text)
+                    );
+
+            connection =
+                    (HttpURLConnection)
+                            URI.create(
+                                    aiBaseUrl + "/embed"
+                            )
+                            .toURL()
+                            .openConnection();
+
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setConnectTimeout(10_000);
+            connection.setReadTimeout(60_000);
+            connection.setRequestProperty(
+                    "Content-Type",
+                    "application/json; charset=UTF-8"
+            );
+            connection.setFixedLengthStreamingMode(
+                    requestBody.length
+            );
+
+            try (
+                    OutputStream output =
+                            connection.getOutputStream()
+            ) {
+                output.write(requestBody);
+                output.flush();
+            }
+
+            int status = connection.getResponseCode();
+            InputStream input =
+                    status >= 200 && status < 300
+                            ? connection.getInputStream()
+                            : connection.getErrorStream();
+
+            String responseBody;
+            if (input != null) {
+                try (input) {
+                    responseBody =
+                            new String(
+                                    input.readAllBytes(),
+                                    StandardCharsets.UTF_8
+                            );
+                }
+            } else {
+                responseBody = "";
+            }
+
+            if (status < 200 || status >= 300) {
+                throw new RuntimeException(
+                        "FastAPI HTTP "
+                                + status
+                                + ": "
+                                + responseBody
+                );
+            }
+
+            AiEmbedResponse result =
+                    jsonMapper.readValue(
+                            responseBody,
+                            AiEmbedResponse.class
+                    );
+
+            if (result.dimensions() != 768
+                    || result.vector() == null
+                    || result.vector().size() != 768) {
+                throw new IllegalStateException(
+                        "임베딩은 768차원이어야 합니다."
+                );
+            }
+
+            return result;
+
+        } catch (Exception e) {
+            throw new RuntimeException(
+                    "FastAPI 임베딩 요청 실패: "
+                            + e.getMessage(),
+                    e
+            );
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
     public AiAnalyzeResponse analyzeVideo(
             MultipartFile file
     ) {

@@ -10,6 +10,7 @@ export type ApiContent = {
   categories: string[];
   keywords: string[];
   entities: string[];
+  structuredAnalysis?: string | null;
 };
 
 const API_BASE_URL =
@@ -82,6 +83,25 @@ export async function searchContents(
 
   if (!response.ok) {
     throw new Error(`콘텐츠 검색 실패: HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function semanticSearchContents(
+  query: string,
+  limit = 20,
+): Promise<ApiContent[]> {
+  const searchTerm = encodeURIComponent(query.trim());
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+  const response = await fetch(
+    `${API_BASE_URL}/contents/search/semantic?q=${searchTerm}&limit=${safeLimit}`,
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `의미 검색 실패: HTTP ${response.status}`,
+    );
   }
 
   return response.json();

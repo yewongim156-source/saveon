@@ -2,6 +2,13 @@
 
 FastAPI server for URL and uploaded-video analysis.
 
+The AI server also provides:
+
+- Gemini structured metadata with stable top-level categories, dynamic tags,
+  typed entities, and verifiable claims;
+- 768-dimensional Gemini embeddings through `POST /embed`;
+- optional Google Search-grounded fact checking for up to three claims.
+
 ## YouTube URL pipeline
 
 `POST /analyze` now accepts a public YouTube watch, Shorts, or `youtu.be`
@@ -30,6 +37,11 @@ waits until analysis finishes.
 | `YOUTUBE_MAX_FILE_SIZE_MB` | `150` | Maximum downloaded media size |
 | `WHISPER_MODEL` | `base` | faster-whisper model name |
 | `CLIP_MODEL` | `openai/clip-vit-base-patch32` | Transformers CLIP model |
+| `GEMINI_API_KEY` | none | Gemini structuring, embedding, and grounding |
+| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Semantic-search embedding model |
+| `GEMINI_EMBEDDING_DIMENSIONS` | `768` | Must match the pgvector column |
+| `FACT_CHECK_ENABLED` | `false` | Enable search-grounded claim verification |
+| `MAX_FACT_CHECK_CLAIMS` | `3` | Maximum claims verified per content |
 
 ## Run
 
@@ -41,6 +53,10 @@ python -m uvicorn main:app --reload --port 8000
 
 Run these commands from the `ai` directory. The first analysis downloads the
 configured Whisper, OCR, and CLIP model files.
+
+Copy `.env.example` to `.env` and set `GEMINI_API_KEY` to enable structured
+metadata and semantic embeddings. Fact checking stays disabled until
+`FACT_CHECK_ENABLED=true` is set because it adds external search calls.
 
 ## Test
 

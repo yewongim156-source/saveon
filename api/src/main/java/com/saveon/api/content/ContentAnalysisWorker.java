@@ -71,8 +71,27 @@ public class ContentAnalysisWorker {
                     result.summary(),
                     result.categories(),
                     result.keywords(),
-                    result.entities()
+                    result.entities(),
+                    result.structuredJson()
             );
+
+            try {
+                var embeddingResult =
+                        aiClient.embed(
+                                result.embeddingText()
+                        );
+
+                latest.setEmbedding(
+                        embeddingResult.asArray(),
+                        embeddingResult.model(),
+                        result.embeddingText()
+                );
+            } catch (Exception embeddingError) {
+                System.err.println(
+                        "⚠️ 임베딩 생성 실패 - 분석 결과는 유지: "
+                                + embeddingError.getMessage()
+                );
+            }
 
             contentRepository.save(
                     latest
