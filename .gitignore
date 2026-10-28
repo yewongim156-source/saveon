@@ -21,6 +21,12 @@ ai/venv/
 ai/__pycache__/
 ai/**/*.pyc
 ai/.pytest_cache/
+developer-api/.venv/
+developer-api/venv/
+developer-api/__pycache__/
+developer-api/**/*.pyc
+developer-api/.pytest_cache/
+developer-api/*.db
 
 # IDE
 .idea/

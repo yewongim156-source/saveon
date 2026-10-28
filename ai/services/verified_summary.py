@@ -8,6 +8,7 @@ from google.genai import types
 
 from services.fact_verifier import FACT_CHECK_ENABLED
 from services.llm_postprocessor import GEMINI_API_KEY, GEMINI_MODEL
+from services.telemetry import pipeline_step
 
 
 VERIFIED_SUMMARY_MODEL = os.getenv(
@@ -225,10 +226,30 @@ def apply_verified_summary(result: dict) -> dict:
         return result
 
     try:
-        generated = _generate_verified_summary(
-            raw_summary,
-            structured,
-        )
+        with pipeline_step(
+            "verified-summary",
+            kind="AGENT",
+            model=VERIFIED_SUMMARY_MODEL,
+            prompt_version="verified-summary-v1",
+            input_summary={
+                "verificationStatus": status,
+                "factCheckCount": len(
+                    structured.get("factChecks", [])
+                ),
+            },
+        ) as step:
+            generated = _generate_verified_summary(
+                raw_summary,
+                structured,
+            )
+            step.set_output({
+                "verifiedFactCount": len(
+                    generated.get("verifiedFacts", [])
+                ),
+                "correctionCount": len(
+                    generated.get("corrections", [])
+                ),
+            })
         structured.update(generated)
         structured["summarySource"] = "VERIFIED_SYNTHESIS"
         result["summary"] = generated["verifiedSummary"]

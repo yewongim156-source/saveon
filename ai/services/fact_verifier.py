@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 
 from services.llm_postprocessor import GEMINI_API_KEY, GEMINI_MODEL
+from services.telemetry import pipeline_step
 
 
 FACT_CHECK_ENABLED = os.getenv(
@@ -157,9 +158,24 @@ def verify_structured_claims(structured: dict) -> dict:
     ][:max(0, MAX_FACT_CHECK_CLAIMS)]
 
     checks: list[dict] = []
-    for claim in claims:
+    for index, claim in enumerate(claims):
         try:
-            checks.append(_verify_claim(claim))
+            with pipeline_step(
+                f"fact-verification-{index + 1}",
+                kind="AGENT",
+                model=FACT_CHECK_MODEL,
+                prompt_version="fact-verification-v1",
+                input_summary={
+                    "claim": claim.get("text", ""),
+                    "claimType": claim.get("type", "OTHER"),
+                },
+            ) as step:
+                checked = _verify_claim(claim)
+                checks.append(checked)
+                step.set_output({
+                    "verdict": checked.get("verdict"),
+                    "sourceCount": len(checked.get("sources", [])),
+                })
         except Exception as exc:
             print(f"[FACT CHECK] 주장 검증 실패 - 계속 진행: {exc}")
             checks.append({

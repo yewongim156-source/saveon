@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from services.embedding_service import embed_text
 from services.video_pipeline import analyze_video_file
+from services.telemetry import pipeline_step, trace_session
 from services.instagram_source import (
     InstagramDownloadError,
     InvalidInstagramUrlError,
@@ -67,22 +68,50 @@ def health():
 
 @app.post("/embed", response_model=EmbedResponse)
 def create_embedding(request: EmbedRequest):
-    try:
-        return EmbedResponse(**embed_text(request.text))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"임베딩 생성 실패: {exc}",
-        ) from exc
+    with trace_session(
+        platform="INTERNAL",
+        source_url="embedding-request",
+    ):
+        try:
+            with pipeline_step(
+                "semantic-embedding",
+                kind="TOOL",
+                model="gemini-embedding-2",
+                input_summary={"textLength": len(request.text)},
+            ) as step:
+                result = EmbedResponse(**embed_text(request.text))
+                step.set_output({"dimensions": result.dimensions})
+                return result
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"임베딩 생성 실패: {exc}",
+            ) from exc
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze_url(request: AnalyzeRequest):
     source_url = request.sourceUrl.strip()
+    platform = (
+        "INSTAGRAM"
+        if is_instagram_reel_url(source_url)
+        else "YOUTUBE"
+        if is_youtube_url(source_url)
+        else "WEB"
+    )
+
+    with trace_session(
+        platform=platform,
+        source_url=source_url,
+    ):
+        return _analyze_source_url(source_url)
+
+
+def _analyze_source_url(source_url: str):
     url = source_url.lower()
 
     if is_instagram_reel_url(source_url):
@@ -90,10 +119,19 @@ def analyze_url(request: AnalyzeRequest):
             prefix="saveon-instagram-"
         ) as temp_dir:
             try:
-                media = download_instagram_reel(
-                    source_url,
-                    Path(temp_dir),
-                )
+                with pipeline_step(
+                    "source-download",
+                    kind="TOOL",
+                    input_summary={"platform": "INSTAGRAM"},
+                ) as step:
+                    media = download_instagram_reel(
+                        source_url,
+                        Path(temp_dir),
+                    )
+                    step.set_output({
+                        "title": media.title,
+                        "hasAudio": media.audio_path is not None,
+                    })
 
                 result = analyze_video_file(
                     media.path,
@@ -134,10 +172,19 @@ def analyze_url(request: AnalyzeRequest):
             prefix="saveon-youtube-"
         ) as temp_dir:
             try:
-                media = download_youtube_video(
-                    source_url,
-                    Path(temp_dir),
-                )
+                with pipeline_step(
+                    "source-download",
+                    kind="TOOL",
+                    input_summary={"platform": "YOUTUBE"},
+                ) as step:
+                    media = download_youtube_video(
+                        source_url,
+                        Path(temp_dir),
+                    )
+                    step.set_output({
+                        "title": media.title,
+                        "hasAudio": media.audio_path is not None,
+                    })
                 result = analyze_video_file(
                     media.path,
                     audio_path=media.audio_path,
@@ -177,21 +224,27 @@ async def analyze_video(file: UploadFile = File(...)):
     filename = file.filename or "upload.mp4"
     suffix = Path(filename).suffix or ".mp4"
 
-    with tempfile.TemporaryDirectory(prefix="saveon-") as temp_dir:
-        video_path = Path(temp_dir) / f"input{suffix}"
+    with trace_session(platform="UPLOAD", source_url=filename):
+        with tempfile.TemporaryDirectory(prefix="saveon-") as temp_dir:
+            video_path = Path(temp_dir) / f"input{suffix}"
 
-        try:
-            with video_path.open("wb") as output:
-                shutil.copyfileobj(file.file, output)
+            try:
+                with pipeline_step(
+                    "upload-save",
+                    kind="TOOL",
+                ) as step:
+                    with video_path.open("wb") as output:
+                        shutil.copyfileobj(file.file, output)
+                    step.set_output({"fileType": suffix.lower()})
 
-            result = analyze_video_file(video_path)
-            return AnalyzeResponse(**result)
+                result = analyze_video_file(video_path)
+                return AnalyzeResponse(**result)
 
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=f"영상 분석 실패: {exc}",
-            ) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"영상 분석 실패: {exc}",
+                ) from exc
 
 
 @app.post("/analyze-video-raw", response_model=AnalyzeResponse)
@@ -210,23 +263,30 @@ async def analyze_video_raw(
     filename = x_filename or "upload.mp4"
     suffix = Path(filename).suffix or ".mp4"
 
-    with tempfile.TemporaryDirectory(prefix="saveon-") as temp_dir:
-        video_path = Path(temp_dir) / f"input{suffix}"
+    with trace_session(platform="UPLOAD", source_url=filename):
+        with tempfile.TemporaryDirectory(prefix="saveon-") as temp_dir:
+            video_path = Path(temp_dir) / f"input{suffix}"
 
-        try:
-            video_path.write_bytes(data)
+            try:
+                with pipeline_step(
+                    "upload-save",
+                    kind="TOOL",
+                    input_summary={"byteCount": len(data)},
+                ) as step:
+                    video_path.write_bytes(data)
+                    step.set_output({"fileType": suffix.lower()})
 
-            print(
-                f"[RAW VIDEO] 수신 완료: "
-                f"{filename} / {len(data)} bytes"
-            )
+                print(
+                    f"[RAW VIDEO] 수신 완료: "
+                    f"{filename} / {len(data)} bytes"
+                )
 
-            result = analyze_video_file(video_path)
+                result = analyze_video_file(video_path)
 
-            return AnalyzeResponse(**result)
+                return AnalyzeResponse(**result)
 
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=f"영상 분석 실패: {exc}",
-            ) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"영상 분석 실패: {exc}",
+                ) from exc

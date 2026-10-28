@@ -43,6 +43,9 @@ waits until analysis finishes.
 | `FACT_CHECK_ENABLED` | `false` | Enable search-grounded claim verification |
 | `GEMINI_VERIFIED_SUMMARY_MODEL` | `GEMINI_MODEL` | Rewrites the final summary from fact-check evidence |
 | `MAX_FACT_CHECK_CLAIMS` | `3` | Maximum claims verified per content |
+| `DEVELOPER_TELEMETRY_ENABLED` | `false` | Send non-blocking trace events to the Developer API |
+| `DEVELOPER_API_URL` | `http://localhost:8100` | Internal observability server URL |
+| `DEVELOPER_API_TOKEN` | none | Shared token for the internal ingestion endpoint |
 
 ## Run
 

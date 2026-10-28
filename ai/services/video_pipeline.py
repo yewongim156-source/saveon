@@ -12,10 +12,12 @@ from PIL import Image
 
 
 from services.llm_postprocessor import (
+    GEMINI_MODEL,
     postprocess_with_llm,
 )
 from services.fact_verifier import verify_structured_claims
 from services.verified_summary import apply_verified_summary
+from services.telemetry import pipeline_step
 
 
 _WHISPER_MODEL = None
@@ -361,15 +363,50 @@ def analyze_video_file(
 
     transcript_source = audio_path or video_path
     try:
-        transcript = transcribe_video(transcript_source)
+        with pipeline_step(
+            "speech-to-text",
+            kind="TOOL",
+            model=os.getenv("WHISPER_MODEL", "base"),
+            input_summary={"hasSeparateAudio": audio_path is not None},
+        ) as step:
+            transcript = transcribe_video(transcript_source)
+            step.set_output({
+                "characters": len(transcript),
+                "hasTranscript": bool(transcript),
+            })
     except Exception as exc:
         # Silent or video-only sources can still produce useful OCR and visual
         # results, so lack of a decodable audio track is not fatal.
         print(f"[AUDIO] 음성 분석 실패 - 화면 분석만 진행: {exc}")
         transcript = ""
-    frames = sample_frames(video_path)
-    ocr_lines = run_ocr(frames)
-    vision_labels = run_vision(frames)
+
+    with pipeline_step(
+        "frame-sampling",
+        kind="TOOL",
+    ) as step:
+        frames = sample_frames(video_path)
+        step.set_output({"frameCount": len(frames)})
+
+    with pipeline_step(
+        "screen-text-ocr",
+        kind="TOOL",
+        model="easyocr-ko-en",
+        input_summary={"frameCount": len(frames)},
+    ) as step:
+        ocr_lines = run_ocr(frames)
+        step.set_output({"lineCount": len(ocr_lines)})
+
+    with pipeline_step(
+        "visual-classification",
+        kind="TOOL",
+        model=os.getenv(
+            "CLIP_MODEL",
+            "openai/clip-vit-base-patch32",
+        ),
+        input_summary={"frameCount": len(frames)},
+    ) as step:
+        vision_labels = run_vision(frames)
+        step.set_output({"labels": vision_labels})
 
     source_text = " ".join(
         [source_title, source_description[:1000]]
@@ -459,11 +496,31 @@ def analyze_video_file(
     llm_transcript = "\n".join(llm_context_parts)
 
     try:
-        result = postprocess_with_llm(
-            transcript=llm_transcript,
-            ocr_lines=ocr_lines,
-            vision_labels=vision_labels,
-        )
+        with pipeline_step(
+            "content-structuring",
+            kind="AGENT",
+            model=GEMINI_MODEL,
+            prompt_version="content-structuring-v1",
+            input_summary={
+                "transcriptCharacters": len(llm_transcript),
+                "ocrLineCount": len(ocr_lines),
+                "visionLabels": vision_labels,
+            },
+        ) as step:
+            result = postprocess_with_llm(
+                transcript=llm_transcript,
+                ocr_lines=ocr_lines,
+                vision_labels=vision_labels,
+            )
+            step.set_output({
+                "primaryCategory": (
+                    result.get("structured", {})
+                    .get("primaryCategory")
+                ),
+                "claimCount": len(
+                    result.get("structured", {}).get("claims", [])
+                ),
+            })
 
         # 혹시 Gemini가 특정 필드를 비워 반환하면
         # 기존 멀티모달 분석 결과로 보완한다.
