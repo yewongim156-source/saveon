@@ -13,6 +13,13 @@ export type ApiContent = {
   structuredAnalysis?: string | null;
 };
 
+export type ApiContentConnection = {
+  entity: string;
+  type: 'PLACE' | 'PRODUCT' | 'BRAND' | 'PERSON' | 'SERVICE';
+  count: number;
+  confidence: number;
+};
+
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL ??
   'http://localhost:8080/api/v1';
@@ -101,6 +108,44 @@ export async function semanticSearchContents(
   if (!response.ok) {
     throw new Error(
       `의미 검색 실패: HTTP ${response.status}`,
+    );
+  }
+
+  return response.json();
+}
+
+export async function getContentConnections(
+  limit = 8,
+): Promise<ApiContentConnection[]> {
+  const safeLimit = Math.max(1, Math.min(limit, 30));
+
+  const response = await fetch(
+    `${API_BASE_URL}/content-connections?limit=${safeLimit}`,
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `콘텐츠 연결 조회 실패: HTTP ${response.status}`,
+    );
+  }
+
+  return response.json();
+}
+
+export async function getConnectedContents(
+  type: ApiContentConnection['type'],
+  entity: string,
+): Promise<ApiContent[]> {
+  const typeParam = encodeURIComponent(type);
+  const entityParam = encodeURIComponent(entity.trim());
+
+  const response = await fetch(
+    `${API_BASE_URL}/content-connections/contents?type=${typeParam}&entity=${entityParam}`,
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `연결 콘텐츠 조회 실패: HTTP ${response.status}`,
     );
   }
 

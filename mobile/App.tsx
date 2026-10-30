@@ -21,7 +21,10 @@ import { theme } from './src/theme';
 import { ContentItem, Screen } from './src/types';
 import {
   ApiContent,
+  ApiContentConnection,
   createContent,
+  getConnectedContents,
+  getContentConnections,
   getContents,
   searchContents,
   uploadVideo,
@@ -72,6 +75,13 @@ function toContentItem(api: ApiContent): ContentItem {
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
   const [contents, setContents] = useState<ContentItem[]>([]);
+  const [connections, setConnections] = useState<
+    ApiContentConnection[]
+  >([]);
+  const [connectionsLoading, setConnectionsLoading] = useState(false);
+  const [connectionFilter, setConnectionFilter] = useState<
+    ApiContentConnection | null
+  >(null);
   const [url, setUrl] = useState('');
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ContentItem[]>([]);
@@ -86,6 +96,7 @@ export default function App() {
 
   useEffect(() => {
     loadContents();
+    loadConnections();
   }, []);
 
   useEffect(() => {
@@ -99,6 +110,7 @@ export default function App() {
 
     const intervalId = setInterval(() => {
       loadContents(true);
+      loadConnections(true);
     }, 4000);
 
     return () => clearInterval(intervalId);
@@ -122,7 +134,12 @@ export default function App() {
 
     const timeoutId = setTimeout(async () => {
       try {
-        const data = await searchContents(searchTerm);
+        const data = connectionFilter
+          ? await getConnectedContents(
+              connectionFilter.type,
+              connectionFilter.entity,
+            )
+          : await searchContents(searchTerm);
 
         if (!cancelled) {
           setSearchResults(data.map(toContentItem));
@@ -147,7 +164,7 @@ export default function App() {
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [contents, query, screen.name]);
+  }, [connectionFilter, contents, query, screen.name]);
 
   async function loadContents(silent = false) {
     console.log('🔄 콘텐츠 조회 시작');
@@ -179,27 +196,36 @@ export default function App() {
     }
   }
 
+  async function loadConnections(silent = false) {
+    try {
+      if (!silent) {
+        setConnectionsLoading(true);
+      }
+
+      const data = await getContentConnections(8);
+      setConnections(data);
+    } catch (error) {
+      console.error(
+        '❌ 콘텐츠 연결 조회 오류:',
+        error,
+      );
+
+      if (!silent) {
+        setConnections([]);
+      }
+    } finally {
+      if (!silent) {
+        setConnectionsLoading(false);
+      }
+    }
+  }
+
   const categories = useMemo(() => {
     const all = Array.from(
       new Set(contents.flatMap((item) => item.category)),
     );
 
     return ['전체', ...all];
-  }, [contents]);
-
-  const repeatedEntities = useMemo(() => {
-    const count = new Map<string, number>();
-
-    contents.forEach((item) => {
-      item.entities.forEach((entity) => {
-        count.set(entity, (count.get(entity) ?? 0) + 1);
-      });
-    });
-
-    return [...count.entries()]
-      .filter(([, n]) => n > 1)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 4);
   }, [contents]);
 
   const filteredContents = useMemo(() => {
@@ -219,7 +245,53 @@ export default function App() {
   function goTab(
     name: 'home' | 'save' | 'library' | 'search',
   ) {
+    if (name === 'search') {
+      setConnectionFilter(null);
+    }
+
     setScreen({ name });
+  }
+
+  function openConnection(
+    connection: ApiContentConnection,
+  ) {
+    setConnectionFilter(connection);
+    setQuery(connection.entity);
+    setScreen({ name: 'search' });
+  }
+
+  function connectionTypeLabel(
+    type: ApiContentConnection['type'],
+  ) {
+    const labels: Record<
+      ApiContentConnection['type'],
+      string
+    > = {
+      PLACE: '장소',
+      PRODUCT: '상품',
+      BRAND: '브랜드',
+      PERSON: '인물',
+      SERVICE: '서비스',
+    };
+
+    return labels[type];
+  }
+
+  function connectionTypeIcon(
+    type: ApiContentConnection['type'],
+  ): keyof typeof Ionicons.glyphMap {
+    const icons: Record<
+      ApiContentConnection['type'],
+      keyof typeof Ionicons.glyphMap
+    > = {
+      PLACE: 'location-outline',
+      PRODUCT: 'bag-outline',
+      BRAND: 'pricetag-outline',
+      PERSON: 'person-outline',
+      SERVICE: 'apps-outline',
+    };
+
+    return icons[type];
   }
 
   function openDetail(
@@ -334,6 +406,8 @@ export default function App() {
         ],
       );
 
+      loadConnections(true);
+
       Alert.alert(
         analyzed.status === 'COMPLETED'
           ? '영상 분석 완료'
@@ -412,25 +486,63 @@ export default function App() {
         </Text>
 
         <View style={styles.entityGrid}>
-          {repeatedEntities.length > 0 ? (
-            repeatedEntities.map(([entity, count]) => (
-              <View
-                key={entity}
+          {connectionsLoading ? (
+            <View style={styles.emptyBox}>
+              <ActivityIndicator
+                size="small"
+                color={theme.primary}
+              />
+              <Text style={styles.connectionLoadingText}>
+                저장된 콘텐츠의 연결을 찾고 있어요.
+              </Text>
+            </View>
+          ) : connections.length > 0 ? (
+            connections.slice(0, 4).map((connection) => (
+              <Pressable
+                key={`${connection.type}:${connection.entity}`}
                 style={styles.entityCard}
+                onPress={() => openConnection(connection)}
               >
-                <Text style={styles.entityName}>
-                  {entity}
+                <View style={styles.connectionCardTop}>
+                  <View style={styles.connectionTypeRow}>
+                    <Ionicons
+                      name={connectionTypeIcon(connection.type)}
+                      size={16}
+                      color={theme.primary}
+                    />
+                    <Text style={styles.connectionTypeText}>
+                      {connectionTypeLabel(connection.type)}
+                    </Text>
+                  </View>
+
+                  <Ionicons
+                    name="chevron-forward"
+                    size={17}
+                    color={theme.muted}
+                  />
+                </View>
+
+                <Text
+                  style={styles.entityName}
+                  numberOfLines={2}
+                >
+                  {connection.entity}
                 </Text>
+
                 <Text style={styles.entityCount}>
-                  {count}개 콘텐츠
+                  {connection.count}개 콘텐츠에서 반복
                 </Text>
-              </View>
+
+                <Text style={styles.connectionLinkText}>
+                  관련 콘텐츠 보기
+                </Text>
+              </Pressable>
             ))
           ) : (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyText}>
-                동일한 장소·상품·주제가 여러 콘텐츠에서
-                등장하면 여기에 표시돼요.
+                같은 장소·상품·브랜드 등이 2개 이상의
+                콘텐츠에서 반복되면 자동으로 연결해 보여줘요.
               </Text>
             </View>
           )}
@@ -670,15 +782,20 @@ export default function App() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.eyebrow}>
-          SEARCH
+          {connectionFilter
+            ? 'CONNECTED CONTENTS'
+            : 'SEARCH'}
         </Text>
         <Text style={styles.h1}>
-          검색
+          {connectionFilter
+            ? `${connectionFilter.entity} 관련 콘텐츠`
+            : '검색'}
         </Text>
 
         <Text style={styles.bodyText}>
-          서버에 저장된 제목·요약·카테고리·키워드·엔티티를
-          한 번에 검색해.
+          {connectionFilter
+            ? `${connectionTypeLabel(connectionFilter.type)} 엔티티가 실제로 함께 추출된 저장 콘텐츠만 모아봤어.`
+            : '서버에 저장된 제목·요약·카테고리·키워드·엔티티를 한 번에 검색해.'}
         </Text>
 
         <View style={styles.searchBox}>
@@ -690,7 +807,10 @@ export default function App() {
 
           <TextInput
             value={query}
-            onChangeText={setQuery}
+            onChangeText={(text) => {
+              setConnectionFilter(null);
+              setQuery(text);
+            }}
             placeholder="예: 카페, 여행, 메이크업"
             placeholderTextColor="#A7ABB4"
             returnKeyType="search"
@@ -700,7 +820,10 @@ export default function App() {
 
           {query.length > 0 && (
             <Pressable
-              onPress={() => setQuery('')}
+              onPress={() => {
+                setConnectionFilter(null);
+                setQuery('');
+              }}
               hitSlop={8}
             >
               <Ionicons
@@ -715,7 +838,9 @@ export default function App() {
         <Text style={styles.resultText}>
           {searching
             ? '검색 중...'
-            : `${searchResults.length}개 결과`}
+            : connectionFilter
+              ? `${searchResults.length}개 연결된 콘텐츠`
+              : `${searchResults.length}개 결과`}
         </Text>
 
         {searching ? (
@@ -1021,6 +1146,33 @@ const styles = StyleSheet.create({
     marginTop: 5,
     fontSize: 12,
     color: theme.muted,
+  },
+  connectionCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  connectionTypeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  connectionTypeText: {
+    color: theme.primary,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  connectionLinkText: {
+    marginTop: 10,
+    color: theme.primary,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  connectionLoadingText: {
+    marginTop: 9,
+    color: theme.muted,
+    fontSize: 12,
   },
   emptyBox: {
     backgroundColor: theme.card,
