@@ -21,9 +21,11 @@ import { theme } from './src/theme';
 import { ContentItem, Screen } from './src/types';
 import {
   ApiContent,
+  ApiContentBundle,
   ApiContentConnection,
   createContent,
   getConnectedContents,
+  getContentBundle,
   getContentConnections,
   getContents,
   searchContents,
@@ -82,6 +84,11 @@ export default function App() {
   const [connectionFilter, setConnectionFilter] = useState<
     ApiContentConnection | null
   >(null);
+  const [contentBundle, setContentBundle] = useState<
+    ApiContentBundle | null
+  >(null);
+  const [bundleLoading, setBundleLoading] = useState(false);
+  const [bundleError, setBundleError] = useState<string | null>(null);
   const [url, setUrl] = useState('');
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ContentItem[]>([]);
@@ -166,6 +173,52 @@ export default function App() {
     };
   }, [connectionFilter, contents, query, screen.name]);
 
+  useEffect(() => {
+    if (screen.name !== 'search' || !connectionFilter) {
+      setContentBundle(null);
+      setBundleError(null);
+      setBundleLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadBundle() {
+      try {
+        setBundleLoading(true);
+        setBundleError(null);
+
+        const data = await getContentBundle(
+          connectionFilter.type,
+          connectionFilter.entity,
+        );
+
+        if (!cancelled) {
+          setContentBundle(data);
+        }
+      } catch (error) {
+        console.error('❌ 관심 정보 묶음 조회 오류:', error);
+
+        if (!cancelled) {
+          setContentBundle(null);
+          setBundleError(
+            '통합 정보를 불러오지 못했어. 관련 콘텐츠는 계속 볼 수 있어.',
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setBundleLoading(false);
+        }
+      }
+    }
+
+    loadBundle();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionFilter, screen.name]);
+
   async function loadContents(silent = false) {
     console.log('🔄 콘텐츠 조회 시작');
 
@@ -247,6 +300,8 @@ export default function App() {
   ) {
     if (name === 'search') {
       setConnectionFilter(null);
+      setContentBundle(null);
+      setBundleError(null);
     }
 
     setScreen({ name });
@@ -292,6 +347,181 @@ export default function App() {
     };
 
     return icons[type];
+  }
+
+  function renderConnectionBundle() {
+    if (!connectionFilter) return null;
+
+    if (bundleLoading) {
+      return (
+        <View style={styles.bundlePanel}>
+          <View style={styles.bundleLoadingRow}>
+            <ActivityIndicator
+              size="small"
+              color={theme.primary}
+            />
+            <Text style={styles.bundleLoadingText}>
+              연결된 콘텐츠를 하나의 정보로 정리하고 있어.
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    if (bundleError) {
+      return (
+        <View style={styles.bundlePanel}>
+          <Text style={styles.bundleErrorText}>
+            {bundleError}
+          </Text>
+        </View>
+      );
+    }
+
+    if (!contentBundle) return null;
+
+    return (
+      <View style={styles.bundlePanel}>
+        <View style={styles.bundleHeader}>
+          <View style={styles.bundleIconBubble}>
+            <Ionicons
+              name={connectionTypeIcon(contentBundle.type)}
+              size={20}
+              color={theme.primary}
+            />
+          </View>
+
+          <View style={styles.bundleHeaderText}>
+            <Text style={styles.bundleEyebrow}>
+              관심 정보 묶음
+            </Text>
+            <Text style={styles.bundleTitle}>
+              {contentBundle.entity}
+            </Text>
+            <Text style={styles.bundleMeta}>
+              {connectionTypeLabel(contentBundle.type)} · {contentBundle.count}개 콘텐츠 통합
+            </Text>
+          </View>
+        </View>
+
+        <Text style={styles.bundleOverview}>
+          {contentBundle.overview}
+        </Text>
+
+        {contentBundle.categories.length > 0 && (
+          <View style={styles.bundleSection}>
+            <Text style={styles.bundleSectionTitle}>
+              주요 카테고리
+            </Text>
+            <View style={styles.wrapRow}>
+              {contentBundle.categories.map((item) => (
+                <View
+                  key={`category:${item}`}
+                  style={styles.bundleCategoryPill}
+                >
+                  <Text style={styles.bundleCategoryText}>
+                    {item}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {contentBundle.commonTags.length > 0 && (
+          <View style={styles.bundleSection}>
+            <Text style={styles.bundleSectionTitle}>
+              공통 관심
+            </Text>
+            <View style={styles.wrapRow}>
+              {contentBundle.commonTags.map((tag) => (
+                <View
+                  key={`tag:${tag}`}
+                  style={styles.bundleTagPill}
+                >
+                  <Text style={styles.bundleTagText}>
+                    #{tag}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {contentBundle.commonKeywords.length > 0 && (
+          <View style={styles.bundleSection}>
+            <Text style={styles.bundleSectionTitle}>
+              공통 키워드
+            </Text>
+            <View style={styles.wrapRow}>
+              {contentBundle.commonKeywords.map((keyword) => (
+                <View
+                  key={`keyword:${keyword}`}
+                  style={styles.keywordPill}
+                >
+                  <Text style={styles.keywordText}>
+                    {keyword}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {contentBundle.relatedEntities.length > 0 && (
+          <View style={styles.bundleSection}>
+            <Text style={styles.bundleSectionTitle}>
+              함께 반복된 정보
+            </Text>
+
+            {contentBundle.relatedEntities.map((item) => (
+              <View
+                key={`${item.type}:${item.entity}`}
+                style={styles.relatedEntityRow}
+              >
+                <View style={styles.relatedEntityLeft}>
+                  <Ionicons
+                    name={connectionTypeIcon(item.type)}
+                    size={15}
+                    color={theme.accent}
+                  />
+                  <Text style={styles.relatedEntityName}>
+                    {item.entity}
+                  </Text>
+                </View>
+                <Text style={styles.relatedEntityCount}>
+                  {item.count}개에서 등장
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {contentBundle.highlights.length > 0 && (
+          <View style={styles.bundleSection}>
+            <Text style={styles.bundleSectionTitle}>
+              저장된 정보 요약
+            </Text>
+
+            {contentBundle.highlights.map((highlight) => (
+              <View
+                key={highlight.contentId}
+                style={styles.highlightCard}
+              >
+                <Text style={styles.highlightTitle}>
+                  {highlight.title}
+                </Text>
+                {highlight.summary.length > 0 && (
+                  <Text style={styles.highlightSummary}>
+                    {highlight.summary}
+                  </Text>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    );
   }
 
   function openDetail(
@@ -798,42 +1028,52 @@ export default function App() {
             : '서버에 저장된 제목·요약·카테고리·키워드·엔티티를 한 번에 검색해.'}
         </Text>
 
-        <View style={styles.searchBox}>
-          <Ionicons
-            name="search-outline"
-            size={20}
-            color={theme.muted}
-          />
+        {connectionFilter && renderConnectionBundle()}
 
-          <TextInput
-            value={query}
-            onChangeText={(text) => {
-              setConnectionFilter(null);
-              setQuery(text);
-            }}
-            placeholder="예: 카페, 여행, 메이크업"
-            placeholderTextColor="#A7ABB4"
-            returnKeyType="search"
-            autoCorrect={false}
-            style={styles.searchInput}
-          />
+        {!connectionFilter && (
+          <View style={styles.searchBox}>
+            <Ionicons
+              name="search-outline"
+              size={20}
+              color={theme.muted}
+            />
 
-          {query.length > 0 && (
-            <Pressable
-              onPress={() => {
+            <TextInput
+              value={query}
+              onChangeText={(text) => {
                 setConnectionFilter(null);
-                setQuery('');
+                setQuery(text);
               }}
-              hitSlop={8}
-            >
-              <Ionicons
-                name="close-circle"
-                size={19}
-                color={theme.muted}
-              />
-            </Pressable>
-          )}
-        </View>
+              placeholder="예: 카페, 여행, 메이크업"
+              placeholderTextColor="#A7ABB4"
+              returnKeyType="search"
+              autoCorrect={false}
+              style={styles.searchInput}
+            />
+
+            {query.length > 0 && (
+              <Pressable
+                onPress={() => {
+                  setConnectionFilter(null);
+                  setQuery('');
+                }}
+                hitSlop={8}
+              >
+                <Ionicons
+                  name="close-circle"
+                  size={19}
+                  color={theme.muted}
+                />
+              </Pressable>
+            )}
+          </View>
+        )}
+
+        {connectionFilter && (
+          <Text style={styles.relatedContentsTitle}>
+            관련 콘텐츠
+          </Text>
+        )}
 
         <Text style={styles.resultText}>
           {searching
@@ -1366,6 +1606,145 @@ const styles = StyleSheet.create({
     color: theme.accent,
     fontWeight: '800',
     fontSize: 12,
+  },
+  bundlePanel: {
+    marginTop: 18,
+    backgroundColor: theme.card,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: theme.line,
+  },
+  bundleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  bundleIconBubble: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: theme.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bundleHeaderText: {
+    flex: 1,
+  },
+  bundleEyebrow: {
+    color: theme.primary,
+    fontSize: 11,
+    fontWeight: '900',
+    marginBottom: 3,
+  },
+  bundleTitle: {
+    color: theme.text,
+    fontSize: 21,
+    fontWeight: '900',
+  },
+  bundleMeta: {
+    color: theme.muted,
+    fontSize: 12,
+    marginTop: 3,
+  },
+  bundleOverview: {
+    color: theme.text,
+    fontSize: 14,
+    lineHeight: 21,
+    marginTop: 16,
+  },
+  bundleSection: {
+    marginTop: 18,
+  },
+  bundleSectionTitle: {
+    color: theme.text,
+    fontSize: 13,
+    fontWeight: '900',
+    marginBottom: 9,
+  },
+  bundleCategoryPill: {
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#F1F1F5',
+  },
+  bundleCategoryText: {
+    color: theme.text,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  bundleTagPill: {
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: theme.primarySoft,
+  },
+  bundleTagText: {
+    color: theme.primary,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  relatedEntityRow: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.line,
+  },
+  relatedEntityLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    flex: 1,
+  },
+  relatedEntityName: {
+    color: theme.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  relatedEntityCount: {
+    color: theme.muted,
+    fontSize: 11,
+  },
+  highlightCard: {
+    paddingVertical: 11,
+    borderTopWidth: 1,
+    borderTopColor: theme.line,
+  },
+  highlightTitle: {
+    color: theme.text,
+    fontSize: 13,
+    fontWeight: '900',
+    marginBottom: 5,
+  },
+  highlightSummary: {
+    color: theme.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  bundleLoadingRow: {
+    minHeight: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  bundleLoadingText: {
+    color: theme.muted,
+    fontSize: 12,
+    flex: 1,
+  },
+  bundleErrorText: {
+    color: theme.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  relatedContentsTitle: {
+    color: theme.text,
+    fontSize: 18,
+    fontWeight: '900',
+    marginTop: 24,
   },
   refreshButton: {
     minHeight: 44,

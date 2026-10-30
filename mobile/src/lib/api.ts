@@ -20,6 +20,30 @@ export type ApiContentConnection = {
   confidence: number;
 };
 
+export type ApiRelatedEntity = {
+  entity: string;
+  type: ApiContentConnection['type'];
+  count: number;
+};
+
+export type ApiContentHighlight = {
+  contentId: number;
+  title: string;
+  summary: string;
+};
+
+export type ApiContentBundle = {
+  entity: string;
+  type: ApiContentConnection['type'];
+  count: number;
+  overview: string;
+  categories: string[];
+  commonKeywords: string[];
+  commonTags: string[];
+  relatedEntities: ApiRelatedEntity[];
+  highlights: ApiContentHighlight[];
+};
+
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL ??
   'http://localhost:8080/api/v1';
@@ -146,6 +170,26 @@ export async function getConnectedContents(
   if (!response.ok) {
     throw new Error(
       `연결 콘텐츠 조회 실패: HTTP ${response.status}`,
+    );
+  }
+
+  return response.json();
+}
+
+export async function getContentBundle(
+  type: ApiContentConnection['type'],
+  entity: string,
+): Promise<ApiContentBundle> {
+  const typeParam = encodeURIComponent(type);
+  const entityParam = encodeURIComponent(entity.trim());
+
+  const response = await fetch(
+    `${API_BASE_URL}/content-connections/bundle?type=${typeParam}&entity=${entityParam}`,
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `관심 정보 묶음 조회 실패: HTTP ${response.status}`,
     );
   }
 
