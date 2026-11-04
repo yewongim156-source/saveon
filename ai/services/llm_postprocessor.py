@@ -16,8 +16,33 @@ load_dotenv(dotenv_path=ENV_PATH)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv(
     "GEMINI_MODEL",
-    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
 )
+GEMINI_REQUEST_TIMEOUT_MS = int(
+    os.getenv("GEMINI_REQUEST_TIMEOUT_MS", "30000")
+)
+GEMINI_RETRY_ATTEMPTS = int(
+    os.getenv("GEMINI_RETRY_ATTEMPTS", "3")
+)
+
+
+def create_gemini_client() -> genai.Client:
+    return genai.Client(
+        api_key=GEMINI_API_KEY,
+        http_options=types.HttpOptions(
+            timeout=GEMINI_REQUEST_TIMEOUT_MS,
+            retry_options=types.HttpRetryOptions(
+                attempts=max(1, GEMINI_RETRY_ATTEMPTS),
+                initial_delay=0.5,
+                max_delay=2.0,
+                exp_base=2.0,
+                jitter=0.1,
+                # Quota exhaustion (429) needs a quota or billing change,
+                # not repeated requests. Retry only transient server errors.
+                http_status_codes=[500, 502, 503, 504],
+            ),
+        ),
+    )
 
 MAX_TRANSCRIPT_CHARS = 3500
 MAX_OCR_LINES = 20
@@ -395,6 +420,10 @@ def postprocess_with_llm(
     transcript: str,
     ocr_lines: list[str],
     vision_labels: list[str],
+    *,
+    source_title: str = "",
+    source_description: str = "",
+    source_channel: str = "",
 ) -> dict:
     if not GEMINI_API_KEY:
         raise RuntimeError(
@@ -414,9 +443,20 @@ def postprocess_with_llm(
     )
 
     input_data = {
-        "transcript": clean_transcript,
-        "ocr": clean_ocr,
-        "vision_labels": clean_vision,
+        "primary_evidence": {
+            "speech_transcript": clean_transcript,
+            "screen_text_ocr": clean_ocr,
+        },
+        "supporting_evidence": {
+            "source_title": _clean_transcript(source_title)[:300],
+            "source_channel": _clean_transcript(source_channel)[:120],
+        },
+        "weak_evidence": {
+            "source_description": _clean_transcript(
+                source_description
+            )[:1200],
+            "zero_shot_visual_labels": clean_vision,
+        },
     }
 
     prompt = f"""
@@ -441,6 +481,18 @@ IMPORTANT RULES:
 3. Do not invent brands, products, places, people, prices,
    specifications, or other facts that are not supported by
    the provided data.
+
+3a. Evidence priority is primary_evidence, then supporting_evidence,
+    then weak_evidence. A platform description can be stale, promotional,
+    or unrelated to the actual clip. Zero-shot visual labels are coarse.
+    Never let weak evidence override a clear speech transcript or OCR.
+
+    When primary_evidence contains meaningful content, ignore conflicting
+    weak evidence completely, including secondary categories and tags.
+
+3b. If the evidence sources conflict, describe the topic supported by the
+    speech transcript and OCR. Omit the conflicting weak evidence instead
+    of combining unrelated topics.
 
 4. The title must describe the actual main topic naturally in Korean.
 
@@ -499,9 +551,7 @@ INPUT DATA:
 {json.dumps(input_data, ensure_ascii=False, indent=2)}
 """.strip()
 
-    client = genai.Client(
-        api_key=GEMINI_API_KEY
-    )
+    client = create_gemini_client()
 
     response = client.models.generate_content(
         model=GEMINI_MODEL,

@@ -25,6 +25,20 @@ _OCR_READER = None
 _CLIP_MODEL = None
 _CLIP_PROCESSOR = None
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+MODEL_CACHE_ROOT = Path(
+    os.getenv(
+        "SAVEON_MODEL_CACHE_DIR",
+        str(PROJECT_ROOT / ".runtime" / "model-cache"),
+    )
+).expanduser().resolve()
+
+
+def _model_cache_dir(name: str | Path) -> Path:
+    path = MODEL_CACHE_ROOT / name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 VISION_LABELS = [
     "food", "cafe", "travel", "beauty", "shopping",
     "fashion", "technology", "study", "fitness", "daily life",
@@ -85,6 +99,7 @@ def _get_whisper():
             model_name,
             device="cpu",
             compute_type="int8",
+            download_root=str(_model_cache_dir("whisper")),
         )
     return _WHISPER_MODEL
 
@@ -97,6 +112,12 @@ def _get_ocr():
             ["ko", "en"],
             gpu=False,
             verbose=False,
+            model_storage_directory=str(
+                _model_cache_dir(Path("easyocr") / "model")
+            ),
+            user_network_directory=str(
+                _model_cache_dir(Path("easyocr") / "user_network")
+            ),
         )
     return _OCR_READER
 
@@ -110,8 +131,15 @@ def _get_clip():
                 "CLIP_MODEL",
                 "openai/clip-vit-base-patch32",
             )
-            _CLIP_PROCESSOR = CLIPProcessor.from_pretrained(model_name)
-            _CLIP_MODEL = CLIPModel.from_pretrained(model_name)
+            cache_dir = str(_model_cache_dir("huggingface"))
+            _CLIP_PROCESSOR = CLIPProcessor.from_pretrained(
+                model_name,
+                cache_dir=cache_dir,
+            )
+            _CLIP_MODEL = CLIPModel.from_pretrained(
+                model_name,
+                cache_dir=cache_dir,
+            )
             _CLIP_MODEL.eval()
         except Exception as exc:
             print(f"[VISION] CLIP 로딩 실패 - 건너뜀: {exc}")
@@ -235,10 +263,13 @@ def build_categories(
         if any(keyword.lower() in text for keyword in keywords):
             categories.append(category)
 
-    for label in vision_labels:
-        category = VISION_TO_CATEGORY.get(label)
-        if category and category not in categories:
-            categories.append(category)
+    # CLIP uses a small fixed label set and can force an unrelated category.
+    # Treat it as a last-resort signal only when text evidence is unavailable.
+    if not transcript.strip() and not ocr_lines:
+        for label in vision_labels:
+            category = VISION_TO_CATEGORY.get(label)
+            if category and category not in categories:
+                categories.append(category)
 
     if not categories:
         categories.append("영상")
@@ -263,10 +294,11 @@ def extract_keywords(
     counts = Counter(normalized)
     keywords = [word for word, _ in counts.most_common(8)]
 
-    for label in vision_labels:
-        translated = VISION_TO_CATEGORY.get(label, label)
-        if translated not in keywords:
-            keywords.append(translated)
+    if not transcript.strip() and not ocr_lines:
+        for label in vision_labels:
+            translated = VISION_TO_CATEGORY.get(label, label)
+            if translated not in keywords:
+                keywords.append(translated)
 
     return keywords[:10]
 
@@ -320,7 +352,7 @@ def build_summary(
     if ocr_lines:
         pieces.append("화면 텍스트: " + ", ".join(ocr_lines[:6]))
 
-    if vision_labels:
+    if vision_labels and not transcript and not ocr_lines:
         readable = [
             VISION_TO_CATEGORY.get(label, label)
             for label in vision_labels
@@ -328,7 +360,9 @@ def build_summary(
         pieces.append("화면 유형: " + ", ".join(readable))
 
     cleaned_description = " ".join(source_description.split()).strip()
-    if cleaned_description:
+    # Descriptions can be promotional or changed after upload. Use one only
+    # when no content-derived text is available.
+    if cleaned_description and not transcript and not ocr_lines:
         pieces.append(f"영상 설명: {cleaned_description[:220]}")
 
     cleaned_channel = " ".join(source_channel.split()).strip()
@@ -408,9 +442,10 @@ def analyze_video_file(
         vision_labels = run_vision(frames)
         step.set_output({"labels": vision_labels})
 
-    source_text = " ".join(
-        [source_title, source_description[:1000]]
-    ).strip()
+    # The title is a useful supporting hint. The description is intentionally
+    # excluded from deterministic classification because it is not guaranteed
+    # to describe the actual clip.
+    source_text = source_title.strip()
 
     categories = build_categories(
         transcript,
@@ -468,33 +503,6 @@ def analyze_video_file(
         },
     }
 
-    # YouTube 원본 메타데이터도 Gemini가 참고할 수 있도록
-    # 분석 문맥에 함께 포함한다.
-    llm_context_parts = []
-
-    if source_title:
-        llm_context_parts.append(
-            f"원본 영상 제목: {source_title}"
-        )
-
-    if source_description:
-        llm_context_parts.append(
-            "원본 영상 설명: "
-            + source_description[:1200]
-        )
-
-    if source_channel:
-        llm_context_parts.append(
-            f"출처 채널: {source_channel}"
-        )
-
-    if transcript:
-        llm_context_parts.append(
-            f"영상 음성 내용: {transcript}"
-        )
-
-    llm_transcript = "\n".join(llm_context_parts)
-
     try:
         with pipeline_step(
             "content-structuring",
@@ -502,15 +510,25 @@ def analyze_video_file(
             model=GEMINI_MODEL,
             prompt_version="content-structuring-v1",
             input_summary={
-                "transcriptCharacters": len(llm_transcript),
+                "transcriptCharacters": len(transcript),
                 "ocrLineCount": len(ocr_lines),
                 "visionLabels": vision_labels,
             },
         ) as step:
             result = postprocess_with_llm(
-                transcript=llm_transcript,
+                transcript=transcript,
                 ocr_lines=ocr_lines,
-                vision_labels=vision_labels,
+                # The current CLIP classifier is restricted to a small fixed
+                # label set. Keep it as a last-resort signal rather than
+                # contaminating otherwise useful STT/OCR evidence.
+                vision_labels=(
+                    vision_labels
+                    if not transcript and not ocr_lines
+                    else []
+                ),
+                source_title=source_title,
+                source_description=source_description,
+                source_channel=source_channel,
             )
             step.set_output({
                 "primaryCategory": (

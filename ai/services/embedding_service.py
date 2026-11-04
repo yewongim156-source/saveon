@@ -3,10 +3,12 @@ from __future__ import annotations
 import math
 import os
 
-from google import genai
 from google.genai import types
 
-from services.llm_postprocessor import GEMINI_API_KEY
+from services.llm_postprocessor import (
+    GEMINI_API_KEY,
+    create_gemini_client,
+)
 
 
 EMBEDDING_MODEL = os.getenv(
@@ -36,7 +38,7 @@ def embed_text(text: str) -> dict:
             "GEMINI_EMBEDDING_DIMENSIONS는 0보다 커야 합니다."
         )
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client = create_gemini_client()
     response = client.models.embed_content(
         model=EMBEDDING_MODEL,
         contents=cleaned[:12000],
