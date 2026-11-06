@@ -11,6 +11,9 @@ public record ContentBundleResponse(
         List<String> commonKeywords,
         List<String> commonTags,
         List<RelatedEntityResponse> relatedEntities,
-        List<ContentHighlightResponse> highlights
+        List<ContentHighlightResponse> highlights,
+        List<String> contentTypes,
+        List<ContentActionFactResponse> actionFacts,
+        ContentInterestSynthesisResponse synthesis
 ) {
 }

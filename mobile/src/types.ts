@@ -30,7 +30,8 @@ export type TabScreenName =
   | 'home'
   | 'save'
   | 'library'
-  | 'search';
+  | 'search'
+  | 'more';
 
 export type Screen =
   | {

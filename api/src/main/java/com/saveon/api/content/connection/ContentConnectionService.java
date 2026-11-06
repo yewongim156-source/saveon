@@ -4,9 +4,13 @@ import com.saveon.api.content.Content;
 import com.saveon.api.content.ContentRepository;
 import com.saveon.api.content.ContentStatus;
 import com.saveon.api.content.connection.dto.ContentBundleResponse;
+import com.saveon.api.content.connection.dto.ContentActionFactResponse;
 import com.saveon.api.content.connection.dto.ContentConnectionResponse;
+import com.saveon.api.content.connection.dto.ContentInterestSynthesisResponse;
 import com.saveon.api.content.connection.dto.ContentHighlightResponse;
 import com.saveon.api.content.connection.dto.RelatedEntityResponse;
+import com.saveon.api.interest.AiInterestSynthesisResponse;
+import com.saveon.api.interest.InterestSynthesisClient;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -36,14 +40,29 @@ public class ContentConnectionService {
                     "SERVICE"
             );
 
+    private static final Set<String> ACTION_FACT_TYPES =
+            Set.of(
+                    "DATE_TIME",
+                    "LOCATION",
+                    "PRICE",
+                    "PRODUCT_PERFORMANCE",
+                    "TRAVEL_RULE",
+                    "STATISTIC",
+                    "OTHER"
+            );
+
     private final ContentRepository contentRepository;
+    private final InterestSynthesisClient interestSynthesisClient;
     private final JsonMapper jsonMapper;
 
     public ContentConnectionService(
-            ContentRepository contentRepository
+            ContentRepository contentRepository,
+            InterestSynthesisClient interestSynthesisClient
     ) {
         this.contentRepository =
                 contentRepository;
+        this.interestSynthesisClient =
+                interestSynthesisClient;
 
         this.jsonMapper =
                 JsonMapper.builder()
@@ -274,6 +293,15 @@ public class ContentConnectionService {
         List<ContentHighlightResponse> highlights =
                 new ArrayList<>();
 
+        Map<String, Integer> contentTypeCounts =
+                new HashMap<>();
+
+        List<ContentActionFactResponse> actionFacts =
+                new ArrayList<>();
+
+        Set<String> actionFactKeys =
+                new HashSet<>();
+
         String normalizedRoot =
                 normalizeName(entityName);
 
@@ -298,6 +326,46 @@ public class ContentConnectionService {
                     structured.tags(),
                     normalizedRoot
             );
+
+            if (structured.contentType() != null
+                    && !structured.contentType().isBlank()) {
+                contentTypeCounts.merge(
+                        structured.contentType(),
+                        1,
+                        Integer::sum
+                );
+            }
+
+            for (StructuredClaim claim : structured.claims()) {
+                if (!claim.verifiable()
+                        || claim.confidence() < MIN_CONFIDENCE
+                        || !ACTION_FACT_TYPES.contains(claim.type())) {
+                    continue;
+                }
+
+                String normalizedClaim =
+                        normalizeName(claim.text());
+
+                if (normalizedClaim.isBlank()
+                        || !actionFactKeys.add(
+                        claim.type() + "|" + normalizedClaim
+                )) {
+                    continue;
+                }
+
+                if (actionFacts.size() < 10) {
+                    actionFacts.add(
+                            new ContentActionFactResponse(
+                                    content.getId(),
+                                    claim.text(),
+                                    claim.type(),
+                                    roundConfidence(
+                                            claim.confidence()
+                                    )
+                            )
+                    );
+                }
+            }
 
             Set<String> seenRelated =
                     new HashSet<>();
@@ -414,6 +482,13 @@ public class ContentConnectionService {
                     );
         }
 
+        List<String> contentTypes =
+                topValues(
+                        contentTypeCounts,
+                        5,
+                        1
+                );
+
         List<RelatedEntityResponse> relatedEntities =
                 relatedEntityGroups
                         .values()
@@ -453,6 +528,19 @@ public class ContentConnectionService {
                         relatedEntities
                 );
 
+        ContentInterestSynthesisResponse synthesis =
+                synthesizeInterest(
+                        entityName,
+                        type != null ? type : "OTHER",
+                        contents.size(),
+                        overview,
+                        categories,
+                        commonKeywords,
+                        commonTags,
+                        relatedEntities,
+                        highlights
+                );
+
         return new ContentBundleResponse(
                 entityName,
                 type != null ? type : "OTHER",
@@ -462,8 +550,125 @@ public class ContentConnectionService {
                 commonKeywords,
                 commonTags,
                 relatedEntities,
-                highlights
+                highlights,
+                contentTypes,
+                actionFacts,
+                synthesis
         );
+    }
+
+
+    private ContentInterestSynthesisResponse synthesizeInterest(
+            String entity,
+            String type,
+            int count,
+            String overview,
+            List<String> categories,
+            List<String> commonKeywords,
+            List<String> commonTags,
+            List<RelatedEntityResponse> relatedEntities,
+            List<ContentHighlightResponse> highlights
+    ) {
+        ContentInterestSynthesisResponse fallback =
+                buildFallbackSynthesis(
+                        overview,
+                        commonKeywords,
+                        commonTags,
+                        highlights
+                );
+
+        if (count < 2) {
+            return fallback;
+        }
+
+        try {
+            AiInterestSynthesisResponse ai =
+                    interestSynthesisClient.synthesize(
+                            entity,
+                            type,
+                            count,
+                            overview,
+                            categories,
+                            commonKeywords,
+                            commonTags,
+                            relatedEntities,
+                            highlights
+                    );
+
+            if (ai == null
+                    || ai.summary() == null
+                    || ai.summary().isBlank()) {
+                return fallback;
+            }
+
+            return new ContentInterestSynthesisResponse(
+                    "AGENT",
+                    ai.summary().trim(),
+                    safeList(ai.keyInterests()),
+                    safeList(ai.takeaways())
+            );
+
+        } catch (Exception error) {
+            System.err.println(
+                    "⚠️ Interest Synthesis Agent 실패 - 규칙 기반 결과 사용: "
+                            + error.getMessage()
+            );
+            return fallback;
+        }
+    }
+
+
+    private ContentInterestSynthesisResponse buildFallbackSynthesis(
+            String overview,
+            List<String> commonKeywords,
+            List<String> commonTags,
+            List<ContentHighlightResponse> highlights
+    ) {
+        List<String> interests =
+                !commonTags.isEmpty()
+                        ? commonTags.stream()
+                        .limit(5)
+                        .toList()
+                        : commonKeywords.stream()
+                        .limit(5)
+                        .toList();
+
+        List<String> takeaways =
+                highlights.stream()
+                        .map(ContentHighlightResponse::summary)
+                        .filter(value ->
+                                value != null
+                                        && !value.isBlank()
+                        )
+                        .distinct()
+                        .limit(3)
+                        .toList();
+
+        return new ContentInterestSynthesisResponse(
+                "RULE_BASED",
+                overview,
+                interests,
+                takeaways
+        );
+    }
+
+
+    private List<String> safeList(
+            List<String> values
+    ) {
+        if (values == null) {
+            return List.of();
+        }
+
+        return values.stream()
+                .filter(value ->
+                        value != null
+                                && !value.isBlank()
+                )
+                .map(String::trim)
+                .distinct()
+                .limit(5)
+                .toList();
     }
 
 
@@ -635,6 +840,8 @@ public class ContentConnectionService {
                 || raw.isBlank()) {
             return new StructuredData(
                     List.of(),
+                    List.of(),
+                    "",
                     List.of()
             );
         }
@@ -660,9 +867,29 @@ public class ContentConnectionService {
                             )
                     );
 
+            String contentType =
+                    normalizeType(
+                            stringValue(
+                                    structured.get(
+                                            "contentType"
+                                    )
+                            )
+                    );
+
+            List<StructuredClaim> claims =
+                    extractClaims(
+                            structured.get(
+                                    "claims"
+                            )
+                    );
+
             return new StructuredData(
                     entities,
-                    tags
+                    tags,
+                    contentType != null
+                            ? contentType
+                            : "",
+                    claims
             );
 
         } catch (Exception error) {
@@ -675,6 +902,8 @@ public class ContentConnectionService {
 
             return new StructuredData(
                     List.of(),
+                    List.of(),
+                    "",
                     List.of()
             );
         }
@@ -726,6 +955,62 @@ public class ContentConnectionService {
                     new StructuredEntity(
                             name,
                             type,
+                            confidence
+                    )
+            );
+        }
+
+        return result;
+    }
+
+
+    private List<StructuredClaim> extractClaims(
+            Object rawClaims
+    ) {
+        if (!(rawClaims instanceof List<?> claims)) {
+            return List.of();
+        }
+
+        List<StructuredClaim> result =
+                new ArrayList<>();
+
+        for (Object rawClaim : claims) {
+            if (!(rawClaim instanceof Map<?, ?> claim)) {
+                continue;
+            }
+
+            String text =
+                    stringValue(
+                            claim.get("text")
+                    ).trim();
+
+            String type =
+                    normalizeType(
+                            stringValue(
+                                    claim.get("type")
+                            )
+                    );
+
+            boolean verifiable =
+                    booleanValue(
+                            claim.get("verifiable")
+                    );
+
+            double confidence =
+                    confidenceValue(
+                            claim.get("confidence")
+                    );
+
+            if (text.isBlank()
+                    || type == null) {
+                continue;
+            }
+
+            result.add(
+                    new StructuredClaim(
+                            text,
+                            type,
+                            verifiable,
                             confidence
                     )
             );
@@ -836,6 +1121,19 @@ public class ContentConnectionService {
     }
 
 
+    private boolean booleanValue(
+            Object value
+    ) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+
+        return Boolean.parseBoolean(
+                stringValue(value)
+        );
+    }
+
+
     private double confidenceValue(
             Object value
     ) {
@@ -887,9 +1185,20 @@ public class ContentConnectionService {
     }
 
 
+    private record StructuredClaim(
+            String text,
+            String type,
+            boolean verifiable,
+            double confidence
+    ) {
+    }
+
+
     private record StructuredData(
             List<StructuredEntity> entities,
-            List<String> tags
+            List<String> tags,
+            String contentType,
+            List<StructuredClaim> claims
     ) {
     }
 

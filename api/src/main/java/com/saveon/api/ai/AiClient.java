@@ -22,9 +22,7 @@ public class AiClient {
             String aiBaseUrl
     ) {
         this.aiBaseUrl = aiBaseUrl;
-
-        this.jsonMapper =
-                JsonMapper.builder().build();
+        this.jsonMapper = JsonMapper.builder().build();
     }
 
     public AiAnalyzeResponse analyze(
@@ -58,10 +56,8 @@ public class AiClient {
                     requestBody.length
             );
 
-            try (
-                    OutputStream output =
-                            connection.getOutputStream()
-            ) {
+            try (OutputStream output =
+                         connection.getOutputStream()) {
                 output.write(requestBody);
                 output.flush();
             }
@@ -143,10 +139,8 @@ public class AiClient {
                     requestBody.length
             );
 
-            try (
-                    OutputStream output =
-                            connection.getOutputStream()
-            ) {
+            try (OutputStream output =
+                         connection.getOutputStream()) {
                 output.write(requestBody);
                 output.flush();
             }
@@ -214,8 +208,24 @@ public class AiClient {
         HttpURLConnection connection = null;
 
         try {
-            byte[] videoBytes =
-                    file.getBytes();
+            if (file == null || file.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "업로드된 영상 파일이 비어 있습니다."
+                );
+            }
+
+            byte[] videoBytes = file.getBytes();
+
+            if (videoBytes.length == 0) {
+                throw new IllegalArgumentException(
+                        "영상 바이트가 0 bytes여서 AI 서버로 전송하지 않았습니다."
+                );
+            }
+
+            String originalFilename =
+                    file.getOriginalFilename() != null
+                            ? file.getOriginalFilename()
+                            : "upload.mp4";
 
             String contentType =
                     file.getContentType() != null
@@ -224,6 +234,8 @@ public class AiClient {
 
             System.out.println(
                     "FastAPI RAW 영상 전송 시작: "
+                            + originalFilename
+                            + " / "
                             + videoBytes.length
                             + " bytes"
             );
@@ -231,8 +243,7 @@ public class AiClient {
             connection =
                     (HttpURLConnection)
                             URI.create(
-                                    aiBaseUrl
-                                            + "/analyze-video-raw"
+                                    aiBaseUrl + "/analyze-video-raw"
                             )
                             .toURL()
                             .openConnection();
@@ -240,32 +251,26 @@ public class AiClient {
             connection.setRequestMethod("POST");
             connection.setDoOutput(true);
             connection.setConnectTimeout(10_000);
-            connection.setReadTimeout(300_000);
-
+            connection.setReadTimeout(1_800_000);
             connection.setRequestProperty(
                     "Content-Type",
                     contentType
             );
-
             connection.setRequestProperty(
                     "X-Filename",
-                    "upload.mp4"
+                    originalFilename
             );
-
             connection.setFixedLengthStreamingMode(
                     videoBytes.length
             );
 
-            try (
-                    OutputStream output =
-                            connection.getOutputStream()
-            ) {
+            try (OutputStream output =
+                         connection.getOutputStream()) {
                 output.write(videoBytes);
                 output.flush();
             }
 
-            int status =
-                    connection.getResponseCode();
+            int status = connection.getResponseCode();
 
             InputStream input =
                     status >= 200 && status < 300
@@ -273,7 +278,6 @@ public class AiClient {
                             : connection.getErrorStream();
 
             String responseBody;
-
             if (input != null) {
                 try (input) {
                     responseBody =
@@ -287,16 +291,13 @@ public class AiClient {
             }
 
             System.out.println(
-                    "FastAPI HTTP status: "
-                            + status
-            );
-
-            System.out.println(
-                    "FastAPI response: "
-                            + responseBody
+                    "FastAPI HTTP status: " + status
             );
 
             if (status < 200 || status >= 300) {
+                System.err.println(
+                        "FastAPI response: " + responseBody
+                );
                 throw new RuntimeException(
                         "FastAPI HTTP "
                                 + status
@@ -318,12 +319,10 @@ public class AiClient {
             return result;
 
         } catch (Exception e) {
-
             System.err.println(
-                    "❌ FastAPI RAW 영상 전송 오류"
+                    "❌ FastAPI RAW 영상 전송 오류: "
+                            + e.getMessage()
             );
-
-            e.printStackTrace();
 
             throw new RuntimeException(
                     "FastAPI 영상 전송 실패: "

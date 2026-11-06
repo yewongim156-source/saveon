@@ -2,6 +2,7 @@ package com.saveon.api.content;
 
 import com.saveon.api.ai.AiAnalyzeResponse;
 import com.saveon.api.ai.AiClient;
+import com.saveon.api.quality.canonical.CanonicalEntityService;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -10,16 +11,21 @@ public class ContentAnalysisWorker {
 
     private final ContentRepository contentRepository;
     private final AiClient aiClient;
+    private final CanonicalEntityService canonicalEntityService;
 
     public ContentAnalysisWorker(
             ContentRepository contentRepository,
-            AiClient aiClient
+            AiClient aiClient,
+            CanonicalEntityService canonicalEntityService
     ) {
         this.contentRepository =
                 contentRepository;
 
         this.aiClient =
                 aiClient;
+
+        this.canonicalEntityService =
+                canonicalEntityService;
     }
 
 
@@ -75,6 +81,19 @@ public class ContentAnalysisWorker {
                     result.structuredJson()
             );
 
+            boolean canonicalApplied =
+                    canonicalEntityService
+                            .applyKnownEntities(
+                                    latest
+                            );
+
+            if (canonicalApplied) {
+                System.out.println(
+                        "🧠 Canonical entity 자동 보정 적용: contentId="
+                                + contentId
+                );
+            }
+
             try {
                 var embeddingResult =
                         aiClient.embed(
@@ -86,6 +105,7 @@ public class ContentAnalysisWorker {
                         embeddingResult.model(),
                         result.embeddingText()
                 );
+
             } catch (Exception embeddingError) {
                 System.err.println(
                         "⚠️ 임베딩 생성 실패 - 분석 결과는 유지: "

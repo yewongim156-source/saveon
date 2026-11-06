@@ -10,6 +10,9 @@
       "bundleIdentifier": "com.yewon.saveon20260918",
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "개발 중 save:on 로컬 서버에 연결하기 위해 사용합니다.",
+        "NSCalendarsUsageDescription": "저장한 콘텐츠의 일정 정보를 캘린더에 추가하기 위해 사용합니다.",
+        "NSCalendarsFullAccessUsageDescription": "저장한 콘텐츠의 일정 정보를 캘린더에 추가하기 위해 사용합니다.",
+        "NSCalendarsWriteOnlyAccessUsageDescription": "저장한 콘텐츠의 일정 정보를 캘린더에 추가하기 위해 사용합니다.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }
@@ -20,6 +23,7 @@
     },
     "plugins": [
       "expo-font",
+      "expo-calendar",
       [
         "expo-share-extension",
         {

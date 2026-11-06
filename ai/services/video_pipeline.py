@@ -10,7 +10,6 @@ import cv2
 import numpy as np
 from PIL import Image
 
-
 from services.llm_postprocessor import (
     GEMINI_MODEL,
     postprocess_with_llm,
@@ -25,6 +24,21 @@ _OCR_READER = None
 _CLIP_MODEL = None
 _CLIP_PROCESSOR = None
 
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+MODEL_CACHE_ROOT = Path(
+    os.getenv(
+        "SAVEON_MODEL_CACHE_DIR",
+        str(PROJECT_ROOT / ".runtime" / "model-cache"),
+    )
+).expanduser().resolve()
+
+
+def _model_cache_dir(name: str | Path) -> Path:
+    path = MODEL_CACHE_ROOT / name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 VISION_LABELS = [
     "food", "cafe", "travel", "beauty", "shopping",
     "fashion", "technology", "study", "fitness", "daily life",
@@ -34,8 +48,15 @@ CATEGORY_KEYWORDS = {
     "맛집": ["맛집", "음식", "메뉴", "먹", "food", "restaurant"],
     "카페": ["카페", "커피", "디저트", "cafe", "coffee"],
     "여행": ["여행", "관광", "호텔", "숙소", "travel", "trip"],
-    "뷰티": ["화장", "메이크업", "립", "아이섀도", "beauty", "makeup"],
-    "쇼핑": ["쇼핑", "구매", "가격", "제품", "shopping", "product"],
+    "뷰티": [
+        "화장", "메이크업", "립", "아이섀도", "쿠션",
+        "파운데이션", "블러셔", "뷰티", "코덕",
+        "beauty", "makeup",
+    ],
+    "쇼핑": [
+        "쇼핑", "구매", "가격", "제품", "추천템",
+        "shopping", "product",
+    ],
     "패션": ["패션", "코디", "옷", "신발", "fashion"],
     "공부": ["공부", "강의", "시험", "study", "lecture"],
     "기술": ["개발", "코딩", "앱", "AI", "기술", "technology", "coding"],
@@ -72,8 +93,15 @@ LEGACY_CATEGORY_TO_PRIMARY = {
 STOPWORDS = {
     "그리고", "하지만", "그냥", "이거", "저거", "영상", "콘텐츠",
     "진짜", "정말", "오늘", "여기", "저기", "하는", "있는", "없는",
-    "with", "this", "that", "from", "have", "your", "video",
+    "with", "this", "that", "from", "have", "your", "video", "reel", "by",
 }
+
+GENERIC_SOURCE_TITLE_PATTERNS = [
+    re.compile(r"^video\s+by\s+.+$", re.I),
+    re.compile(r"^reel\s+by\s+.+$", re.I),
+    re.compile(r"^instagram\s+video$", re.I),
+    re.compile(r"^youtube\s+video$", re.I),
+]
 
 
 def _get_whisper():
@@ -85,6 +113,7 @@ def _get_whisper():
             model_name,
             device="cpu",
             compute_type="int8",
+            download_root=str(_model_cache_dir("whisper")),
         )
     return _WHISPER_MODEL
 
@@ -97,6 +126,12 @@ def _get_ocr():
             ["ko", "en"],
             gpu=False,
             verbose=False,
+            model_storage_directory=str(
+                _model_cache_dir(Path("easyocr") / "model")
+            ),
+            user_network_directory=str(
+                _model_cache_dir(Path("easyocr") / "user_network")
+            ),
         )
     return _OCR_READER
 
@@ -110,8 +145,15 @@ def _get_clip():
                 "CLIP_MODEL",
                 "openai/clip-vit-base-patch32",
             )
-            _CLIP_PROCESSOR = CLIPProcessor.from_pretrained(model_name)
-            _CLIP_MODEL = CLIPModel.from_pretrained(model_name)
+            cache_dir = str(_model_cache_dir("huggingface"))
+            _CLIP_PROCESSOR = CLIPProcessor.from_pretrained(
+                model_name,
+                cache_dir=cache_dir,
+            )
+            _CLIP_MODEL = CLIPModel.from_pretrained(
+                model_name,
+                cache_dir=cache_dir,
+            )
             _CLIP_MODEL.eval()
         except Exception as exc:
             print(f"[VISION] CLIP 로딩 실패 - 건너뜀: {exc}")
@@ -154,14 +196,17 @@ def sample_frames(video_path: Path, max_frames: int = 6) -> list[np.ndarray]:
         dtype=int,
     )
 
-    for frame_number in positions:
-        capture.set(cv2.CAP_PROP_POS_FRAMES, int(frame_number))
+    for position in positions:
+        capture.set(cv2.CAP_PROP_POS_FRAMES, int(position))
         ok, frame = capture.read()
         if ok and frame is not None:
             frames.append(frame)
 
     capture.release()
-    print(f"[VIDEO] sampled={len(frames)} total_frames={total_frames} fps={fps:.2f}")
+    print(
+        f"[VIDEO] sampled={len(frames)} "
+        f"total_frames={total_frames} fps={fps:.2f}"
+    )
     return frames
 
 
@@ -228,11 +273,17 @@ def build_categories(
     vision_labels: list[str],
     source_text: str = "",
 ) -> list[str]:
-    text = " ".join([source_text, transcript, *ocr_lines]).lower()
+    # publisher metadata first so strong caption evidence wins before noisy OCR/vision
+    ordered_text = " ".join(
+        [source_text, source_text, transcript, *ocr_lines]
+    ).lower()
     categories: list[str] = []
 
     for category, keywords in CATEGORY_KEYWORDS.items():
-        if any(keyword.lower() in text for keyword in keywords):
+        if any(
+            keyword.lower() in ordered_text
+            for keyword in keywords
+        ):
             categories.append(category)
 
     for label in vision_labels:
@@ -252,7 +303,10 @@ def extract_keywords(
     vision_labels: list[str],
     source_text: str = "",
 ) -> list[str]:
-    text = " ".join([source_text, transcript, *ocr_lines])
+    # source metadata is duplicated intentionally to increase stable publisher signal
+    text = " ".join(
+        [source_text, source_text, transcript, *ocr_lines]
+    )
     words = re.findall(r"[가-힣A-Za-z0-9]{2,}", text)
     normalized = [
         word
@@ -272,12 +326,33 @@ def extract_keywords(
 
 
 def extract_entities(ocr_lines: list[str]) -> list[str]:
-    entities = []
-    for line in ocr_lines:
-        clean = line.strip()
-        if 2 <= len(clean) <= 30:
-            entities.append(clean)
-    return unique_preserve_order(entities)[:8]
+    # OCR only로 엔티티를 만드는 fallback은 오탐 비용이 매우 높다.
+    # Gemini 후처리에 실패한 경우에도 무의미한 OCR 조각을 사용자 데이터로
+    # 저장하지 않는 편이 안전하다.
+    return []
+
+
+def _generic_source_title(value: str) -> bool:
+    cleaned = " ".join(value.split()).strip()
+    if not cleaned:
+        return True
+
+    return any(
+        pattern.match(cleaned)
+        for pattern in GENERIC_SOURCE_TITLE_PATTERNS
+    )
+
+
+def _description_title(source_description: str) -> str:
+    cleaned = " ".join(
+        source_description.split()
+    ).strip()
+    if not cleaned:
+        return ""
+
+    before_tags = cleaned.split("#", 1)[0].strip()
+    candidate = before_tags or cleaned
+    return candidate[:80]
 
 
 def build_title(
@@ -285,24 +360,39 @@ def build_title(
     ocr_lines: list[str],
     categories: list[str],
     source_title: str = "",
+    source_description: str = "",
 ) -> str:
     cleaned_source_title = " ".join(source_title.split()).strip()
-    if cleaned_source_title:
+
+    if cleaned_source_title and not _generic_source_title(
+        cleaned_source_title
+    ):
         return cleaned_source_title[:80]
+
+    from_description = _description_title(
+        source_description
+    )
+    if from_description:
+        return from_description
 
     if ocr_lines:
         title = ocr_lines[0][:40]
         if title:
             return title
 
-    sentence = re.split(r"[.!?。]\s*", transcript, maxsplit=1)[0].strip()
+    sentence = re.split(
+        r"[.!?。]\s*",
+        transcript,
+        maxsplit=1,
+    )[0].strip()
+
     if sentence:
         return sentence[:40]
 
     if categories:
-        return f"{categories[0]} 영상 분석 결과"
+        return f"{categories[0]} 영상"
 
-    return "영상 분석 결과"
+    return "저장한 영상"
 
 
 def build_summary(
@@ -312,33 +402,46 @@ def build_summary(
     source_description: str = "",
     source_channel: str = "",
 ) -> str:
-    pieces = []
+    cleaned_description = " ".join(
+        source_description.split()
+    ).strip()
+
+    # fallback에서도 사용자-facing 문장으로 시작한다.
+    if cleaned_description:
+        return cleaned_description[:500]
 
     if transcript:
-        pieces.append(f"음성 내용: {transcript[:260]}")
+        cleaned_transcript = " ".join(
+            transcript.split()
+        ).strip()
+        if cleaned_transcript:
+            return (
+                "영상에서 "
+                + cleaned_transcript[:420]
+            )[:500]
 
     if ocr_lines:
-        pieces.append("화면 텍스트: " + ", ".join(ocr_lines[:6]))
+        meaningful = ", ".join(
+            ocr_lines[:4]
+        )
+        if meaningful:
+            return (
+                "영상 화면에서 "
+                + meaningful
+                + " 관련 내용을 확인했어요."
+            )[:500]
 
     if vision_labels:
         readable = [
             VISION_TO_CATEGORY.get(label, label)
             for label in vision_labels
         ]
-        pieces.append("화면 유형: " + ", ".join(readable))
+        return (
+            ", ".join(readable)
+            + " 관련 영상으로 분류했어요."
+        )[:500]
 
-    cleaned_description = " ".join(source_description.split()).strip()
-    if cleaned_description:
-        pieces.append(f"영상 설명: {cleaned_description[:220]}")
-
-    cleaned_channel = " ".join(source_channel.split()).strip()
-    if cleaned_channel:
-        pieces.append(f"출처 채널: {cleaned_channel[:80]}")
-
-    if not pieces:
-        return "영상에서 분석 가능한 음성 또는 화면 텍스트를 충분히 찾지 못했습니다."
-
-    return " / ".join(pieces)[:900]
+    return "영상에서 분석 가능한 내용을 충분히 찾지 못했어요."
 
 
 def unique_preserve_order(values: Iterable[str]) -> list[str]:
@@ -375,8 +478,6 @@ def analyze_video_file(
                 "hasTranscript": bool(transcript),
             })
     except Exception as exc:
-        # Silent or video-only sources can still produce useful OCR and visual
-        # results, so lack of a decodable audio track is not fatal.
         print(f"[AUDIO] 음성 분석 실패 - 화면 분석만 진행: {exc}")
         transcript = ""
 
@@ -439,6 +540,7 @@ def analyze_video_file(
             ocr_lines,
             categories,
             source_title,
+            source_description,
         ),
         "summary": build_summary(
             transcript,
@@ -447,7 +549,9 @@ def analyze_video_file(
             source_description,
             source_channel,
         ),
-        "categories": categories,
+        "categories": [
+            fallback_primary_category
+        ] if fallback_primary_category != "기타" else ["기타"],
         "keywords": keywords,
         "entities": entities,
         "structured": {
@@ -455,62 +559,32 @@ def analyze_video_file(
             "secondaryCategories": categories[:3],
             "tags": keywords[:8],
             "contentType": "OTHER",
-            "entityDetails": [
-                {
-                    "name": entity,
-                    "type": "OTHER",
-                    "confidence": 0.0,
-                }
-                for entity in entities
-            ],
+            "entityDetails": [],
             "claims": [],
             "factChecks": [],
         },
     }
-
-    # YouTube 원본 메타데이터도 Gemini가 참고할 수 있도록
-    # 분석 문맥에 함께 포함한다.
-    llm_context_parts = []
-
-    if source_title:
-        llm_context_parts.append(
-            f"원본 영상 제목: {source_title}"
-        )
-
-    if source_description:
-        llm_context_parts.append(
-            "원본 영상 설명: "
-            + source_description[:1200]
-        )
-
-    if source_channel:
-        llm_context_parts.append(
-            f"출처 채널: {source_channel}"
-        )
-
-    if transcript:
-        llm_context_parts.append(
-            f"영상 음성 내용: {transcript}"
-        )
-
-    llm_transcript = "\n".join(llm_context_parts)
 
     try:
         with pipeline_step(
             "content-structuring",
             kind="AGENT",
             model=GEMINI_MODEL,
-            prompt_version="content-structuring-v1",
+            prompt_version="content-structuring-v2-quality",
             input_summary={
-                "transcriptCharacters": len(llm_transcript),
+                "transcriptCharacters": len(transcript),
                 "ocrLineCount": len(ocr_lines),
                 "visionLabels": vision_labels,
+                "hasSourceDescription": bool(source_description),
             },
         ) as step:
             result = postprocess_with_llm(
-                transcript=llm_transcript,
+                transcript=transcript,
                 ocr_lines=ocr_lines,
                 vision_labels=vision_labels,
+                source_title=source_title,
+                source_description=source_description,
+                source_channel=source_channel,
             )
             step.set_output({
                 "primaryCategory": (
@@ -520,27 +594,34 @@ def analyze_video_file(
                 "claimCount": len(
                     result.get("structured", {}).get("claims", [])
                 ),
+                "entityCount": len(
+                    result.get("structured", {}).get(
+                        "entityDetails",
+                        [],
+                    )
+                ),
             })
 
-        # 혹시 Gemini가 특정 필드를 비워 반환하면
-        # 기존 멀티모달 분석 결과로 보완한다.
         for key in (
             "title",
             "summary",
             "categories",
             "keywords",
-            "entities",
             "structured",
         ):
             if not result.get(key):
                 result[key] = fallback_result[key]
+
+        # entities는 빈 배열이 정상일 수 있다.
+        if "entities" not in result:
+            result["entities"] = []
 
         print("[VIDEO] Gemini 후처리 사용")
 
     except Exception as exc:
         print(
             "[LLM] Gemini 후처리 실패 "
-            f"- fallback 사용: {exc}"
+            f"- 품질 보호 fallback 사용: {exc}"
         )
         result = fallback_result
 
