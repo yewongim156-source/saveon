@@ -7,6 +7,7 @@ import com.saveon.api.collection.dto.SmartCollectionResponse;
 import com.saveon.api.content.Content;
 import com.saveon.api.content.ContentService;
 import com.saveon.api.content.ContentStatus;
+import com.saveon.api.content.ContentSourceIdentity;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -29,8 +30,7 @@ public class SmartCollectionService {
 
     private static final int DEFAULT_LIMIT = 6;
     private static final int MAX_LIMIT = 10;
-    private static final int MAX_SEEDS = 10;
-    private static final int SEMANTIC_CANDIDATES = 12;
+    private static final int MAX_SEEDS = 50;
     private static final int MAX_ITEMS_PER_COLLECTION = 8;
 
     private static final Set<String> GENERIC_TERMS = Set.of(
@@ -43,7 +43,19 @@ public class SmartCollectionService {
             "일상",
             "브이로그",
             "shorts",
-            "reels"
+            "reels",
+            "비교",
+            "정리",
+            "솔직",
+            "사용",
+            "테스트",
+            "꿀팁",
+            "신상",
+            "오늘",
+            "이번",
+            "후기",
+            "정보성",
+            "올영세일"
     );
 
     private static final Set<String> BROAD_COLLECTION_TERMS = Set.of(
@@ -61,7 +73,13 @@ public class SmartCollectionService {
             "엔터테인먼트",
             "음식",
             "레시피",
-            "제품"
+            "제품",
+            "쿠션",
+            "블러셔",
+            "파운데이션",
+            "뷰티템",
+            "쇼핑팁",
+            "올리브영추천"
     );
 
     private final ContentService contentService;
@@ -87,81 +105,51 @@ public class SmartCollectionService {
 
         limit = Math.max(1, Math.min(limit, MAX_LIMIT));
 
+        // One source video is one piece of evidence even if it was saved twice.
+        // Do not modify or delete the user's actual saved content records.
+        Map<String, ContentProfile> uniqueSources =
+                new LinkedHashMap<>();
+
+        for (Content content : contentService.findAll()) {
+            if (content.getStatus() != ContentStatus.COMPLETED) {
+                continue;
+            }
+
+            uniqueSources.putIfAbsent(
+                    sourceIdentity(content),
+                    profile(content)
+            );
+        }
+
         List<ContentProfile> profiles =
-                contentService.findAll().stream()
-                        .filter(content ->
-                                content.getStatus()
-                                        == ContentStatus.COMPLETED
-                        )
-                        .map(this::profile)
-                        .toList();
+                new ArrayList<>(uniqueSources.values());
 
         if (profiles.size() < 2) {
             return List.of();
         }
 
-        List<String> seeds =
-                selectSeeds(profiles);
-
-        List<CollectionCandidate> candidates =
-                new ArrayList<>();
+        List<String> seeds = selectSeeds(profiles);
+        List<CollectionCandidate> candidates = new ArrayList<>();
 
         for (String seed : seeds) {
-            try {
-                List<Content> semanticallySimilar =
-                        contentService.semanticSearch(
-                                seed,
-                                SEMANTIC_CANDIDATES
-                        );
+            // Evidence first: semantic similarity by itself does not establish
+            // that two videos actually cover the same named subject.
+            // Local metadata/title grouping also works without the AI server.
+            List<ContentProfile> members = profiles.stream()
+                    .filter(value ->
+                            matchesTitleSeed(value, seed)
+                                    || matchesTrustedEntity(value, seed)
+                    )
+                    .limit(MAX_ITEMS_PER_COLLECTION)
+                    .toList();
 
-                Map<Long, ContentProfile> byId =
-                        profiles.stream()
-                                .collect(Collectors.toMap(
-                                        value -> value.content().getId(),
-                                        value -> value
-                                ));
-
-                List<ContentProfile> members =
-                        semanticallySimilar.stream()
-                                .map(content ->
-                                        byId.get(content.getId())
-                                )
-                                .filter(value -> value != null)
-                                .filter(value ->
-                                        matchesStrongSeed(value, seed)
-                                                || strongMetadataAffinity(
-                                                        value,
-                                                        seed
-                                                ) >= 2
-                                )
-                                .limit(MAX_ITEMS_PER_COLLECTION)
-                                .toList();
-
-                if (members.size() >= 2) {
-                    candidates.add(
-                            buildCandidate(seed, members)
-                    );
-                }
-
-            } catch (Exception semanticError) {
-                // Semantic search can be unavailable while the AI server is down.
-                // Use deterministic metadata grouping as fallback.
-                List<ContentProfile> members =
-                        profiles.stream()
-                                .filter(value ->
-                                        matchesStrongSeed(value, seed)
-                                )
-                                .limit(MAX_ITEMS_PER_COLLECTION)
-                                .toList();
-
-                if (members.size() >= 2) {
-                    candidates.add(
-                            buildCandidate(seed, members)
-                    );
-                }
+            if (members.size() >= 2) {
+                candidates.add(buildCandidate(seed, members));
             }
         }
 
+        // Stable sorting preserves seed-score order for equal member sets:
+        // "클리오" should not be discarded in favor of "메쉬" by lexical order.
         candidates.sort(
                 Comparator
                         .comparingInt(
@@ -169,10 +157,11 @@ public class SmartCollectionService {
                                         value.members().size()
                         )
                         .reversed()
-                        .thenComparingInt(
-                                CollectionCandidate::specificity
+                        .thenComparing(
+                                Comparator.comparingInt(
+                                        CollectionCandidate::specificity
+                                ).reversed()
                         )
-                        .reversed()
         );
 
         List<CollectionCandidate> deduped =
@@ -191,19 +180,26 @@ public class SmartCollectionService {
                 new HashMap<>();
 
         for (ContentProfile profile : profiles) {
-            Set<String> seenInContent =
-                    new HashSet<>();
+            Set<String> seenInContent = new HashSet<>();
 
             for (String value : profile.entities()) {
                 addSeed(scores, seenInContent, value, 8);
             }
-
             for (String value : profile.keywords()) {
                 addSeed(scores, seenInContent, value, 5);
             }
-
             for (String value : profile.tags()) {
                 addSeed(scores, seenInContent, value, 2);
+            }
+
+            // Old OCR-only analyses may have zero trustworthy entityDetails.
+            // Recognizable names such as "클리오" can still appear in titles.
+            String title = safe(profile.content().getTitle());
+            for (String token : title.split("[^가-힣A-Za-z0-9]+")) {
+                if (token.length() >= 3
+                        && !token.matches(".*[0-9].*")) {
+                    addSeed(scores, seenInContent, token, 3);
+                }
             }
         }
 
@@ -218,10 +214,12 @@ public class SmartCollectionService {
                                                 entry.getValue().score()
                                         )
                                 .reversed()
-                                .thenComparingInt(entry ->
-                                        entry.getValue().count()
+                                .thenComparing(
+                                        Comparator.<Map.Entry<String, SeedScore>>
+                                                comparingInt(entry ->
+                                                        entry.getValue().count()
+                                                ).reversed()
                                 )
-                                .reversed()
                 )
                 .map(Map.Entry::getKey)
                 .filter(seed ->
@@ -270,6 +268,40 @@ public class SmartCollectionService {
                     );
                 }
         );
+    }
+
+    private String sourceIdentity(Content content) {
+        return ContentSourceIdentity.key(content.getSourceUrl(), content.getId());
+    }
+
+    private String compactSubject(String raw) {
+        return clean(raw)
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^가-힣a-z0-9]+", "");
+    }
+
+    private boolean matchesTitleSeed(ContentProfile profile, String seed) {
+        String subject = compactSubject(seed);
+        if (subject.length() < 3) {
+            return false;
+        }
+        String title = compactSubject(profile.content().getTitle());
+        return !title.isBlank() && title.contains(subject);
+    }
+
+    private boolean matchesTrustedEntity(ContentProfile profile, String seed) {
+        String subject = compactSubject(seed);
+        if (subject.length() < 3) {
+            return false;
+        }
+
+        for (String entity : profile.trustedEntities()) {
+            String name = compactSubject(entity);
+            if (name.equals(subject) || name.contains(subject)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean matchesStrongSeed(
@@ -451,7 +483,12 @@ public class SmartCollectionService {
                                 : (double) intersection.size()
                                 / union.size();
 
-                if (jaccard >= 0.75) {
+                double smallerOverlap = intersection.isEmpty()
+                        ? 0.0
+                        : (double) intersection.size()
+                        / Math.min(candidateIds.size(), acceptedIds.size());
+
+                if (jaccard >= 0.75 || smallerOverlap >= 0.85) {
                     duplicate = true;
                     break;
                 }
@@ -583,7 +620,7 @@ public class SmartCollectionService {
     ) {
         if (!candidate.commonKeywords().isEmpty()) {
             return candidate.seed()
-                    + "와 관련해 "
+                    + " 관련 "
                     + String.join(
                             ", ",
                             candidate.commonKeywords()
@@ -591,13 +628,13 @@ public class SmartCollectionService {
                                     .limit(3)
                                     .toList()
                     )
-                    + " 내용이 반복해서 저장돼 있어요.";
+                    + " 영상 모음이에요.";
         }
 
         return candidate.seed()
-                + "와 비슷한 주제의 저장물 "
+                + " 영상 "
                 + candidate.members().size()
-                + "개를 자동으로 모았어요.";
+                + "개를 모았어요.";
     }
 
     private boolean containsTopicWord(
@@ -695,7 +732,8 @@ public class SmartCollectionService {
                         ? content.getKeywords()
                         : List.of(),
                 entities,
-                tags
+                tags,
+                entityDetails
         );
     }
 
@@ -861,7 +899,8 @@ public class SmartCollectionService {
             List<String> categories,
             List<String> keywords,
             List<String> entities,
-            List<String> tags
+            List<String> tags,
+            List<String> trustedEntities
     ) {
         List<String> strongTerms() {
             List<String> result =
@@ -885,3 +924,5 @@ public class SmartCollectionService {
     ) {
     }
 }
+
+// SAVEON_COLLECTION_FALLBACK_COPY_V1

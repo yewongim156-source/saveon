@@ -18,10 +18,28 @@ import { Ionicons } from '@expo/vector-icons';
 
 import BottomNav from './src/components/BottomNav';
 import ContentCard from './src/components/ContentCard';
+import AnalysisProgress from './src/components/ui/AnalysisProgress';
 import { theme } from './src/theme';
+import { isSaveLinkValid, saveLinkIdentity, saveLinkPlatform } from './src/lib/saveLinkUx';
+import DetailSummaryText from './src/components/ui/DetailSummaryText';
+import LibraryFindBar from './src/components/ui/LibraryFindBar';
+// SAVEON_LIBRARY_UX_V1
+import BrandGradient from './src/components/ui/BrandGradient';
+import SectionHeading from './src/components/ui/SectionHeading';
+import InterestHighlights from './src/components/ui/InterestHighlights';
+import ComparisonDigest from './src/components/ui/ComparisonDigest';
+import VideoThumbnail from './src/components/ui/VideoThumbnail';
+import CategoryFilter from './src/components/ui/CategoryFilter';
+import ExpandableEvidence from './src/components/ui/ExpandableEvidence';
+// save:on UI_POLISH_V4
+// save:on VISUAL_REFINEMENT_V3
+import CollectionOverview from './src/components/ui/CollectionOverview';
+// save:on HOME_MORE_DESIGN_V2
+import type { PipelineStage } from './src/design/pipelineStage';
 import { ContentItem, Screen } from './src/types';
 import {
   ApiContent,
+  getContentProgress,
   ApiContentAction,
   ApiContentActionPlan,
   ApiContentBundle,
@@ -92,7 +110,7 @@ function toContentItem(api: ApiContent): ContentItem {
 
   const fallbackSummary =
     api.status === 'FAILED'
-      ? '원본 콘텐츠를 불러오지 못했어요. 다시 시도할 수 있어요.'
+      ? '원본 영상를 불러오지 못했어요. 다시 시도할 수 있어요.'
       : '저장은 끝났어요. 앱을 나가도 정리는 계속 진행돼요.';
 
   return {
@@ -106,6 +124,8 @@ function toContentItem(api: ApiContent): ContentItem {
     entities: api.entities ?? [],
     savedAt: api.createdAt?.slice(0, 10) ?? '',
     thumbnailEmoji: emojiMap[api.platform],
+    thumbnailAvailable: api.thumbnailAvailable === true,
+    analysisStatus: api.status,
   };
 }
 
@@ -130,6 +150,8 @@ export default function App() {
     useState<ApiInterestTimeline | null>(null);
   const [interestTimelineLoading, setInterestTimelineLoading] =
     useState(false);
+  const [interestExpanded, setInterestExpanded] = useState(false);
+  const [comparisonDetailsExpanded, setComparisonDetailsExpanded] = useState(false);
   const [smartReminders, setSmartReminders] = useState<
     ApiSmartReminder[]
   >([]);
@@ -142,6 +164,8 @@ export default function App() {
   const [collectionComparisonLoading, setCollectionComparisonLoading] =
     useState(false);
   const [collectionComparisonError, setCollectionComparisonError] =
+    useState<string | null>(null);
+  const [expandedComparisonEvidence, setExpandedComparisonEvidence] =
     useState<string | null>(null);
   const [connectionFilter, setConnectionFilter] = useState<
     ApiContentConnection | null
@@ -162,6 +186,7 @@ export default function App() {
     useState<ApiContentQuality | null>(null);
   const [qualityLoading, setQualityLoading] = useState(false);
   const [analysisEditing, setAnalysisEditing] = useState(false);
+  const [expandedDetailEntityId, setExpandedDetailEntityId] = useState<string | null>(null);
   const [correctionFocus, setCorrectionFocus] = useState<
     'summary' | 'info' | null
   >(null);
@@ -181,6 +206,7 @@ export default function App() {
     checked: boolean[];
   } | null>(null);
   const [url, setUrl] = useState('');
+  const [instagramThumbnailAllowed, setInstagramThumbnailAllowed] = useState(false);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ContentItem[]>([]);
   const [searching, setSearching] = useState(false);
@@ -197,8 +223,14 @@ export default function App() {
     'home' | 'library' | 'search'
   >('library');
   const [selectedCategory, setSelectedCategory] = useState('전체');
+  const [libraryQuery, setLibraryQuery] = useState('');
+  const [librarySort, setLibrarySort] = useState<'newest' | 'oldest' | 'title'>('newest');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // save:on TRUE_PROGRESS_V1: live, backend-reported stages only.
+  const [liveStages, setLiveStages] = useState<Record<string, PipelineStage>>({});
+  const [submittingUrl, setSubmittingUrl] = useState(false);
+  const [lastSavedId, setLastSavedId] = useState<string | null>(null);
 
   useEffect(() => {
     loadContents();
@@ -209,12 +241,41 @@ export default function App() {
     loadSmartReminders();
   }, []);
 
+  // Poll at most 8 active saved URLs; results from the persisted DB remain authoritative.
+  const activeProgressIds = contents
+    .filter((item) => item.analysisStatus === 'ANALYZING')
+    .slice(0, 8)
+    .map((item) => item.id)
+    .join(',');
+
   useEffect(() => {
-    const hasAnalyzingContent =
-      contents.some((item) =>
-        item.category.includes('정리 중') ||
-        item.category.includes('정리 대기'),
+    if (!activeProgressIds) return;
+    const ids = activeProgressIds.split(',');
+    let disposed = false;
+    const refreshStages = async () => {
+      const results = await Promise.allSettled(
+        ids.map((id) => getContentProgress(Number(id))),
       );
+      if (disposed) return;
+      setLiveStages((previous) => {
+        const next = { ...previous };
+        results.forEach((row, index) => {
+          if (row.status === 'fulfilled') {
+            next[ids[index]] = row.value.stage;
+          }
+        });
+        return next;
+      });
+    };
+    void refreshStages();
+    const timer = setInterval(() => { void refreshStages(); }, 4500);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [activeProgressIds]);
+
+  useEffect(() => {
+    const hasAnalyzingContent = contents.some(
+      (item) => item.analysisStatus === 'PENDING' || item.analysisStatus === 'ANALYZING',
+    );
 
     if (!hasAnalyzingContent) return;
 
@@ -301,7 +362,7 @@ export default function App() {
         if (!cancelled) {
           setSearchResults([]);
           setSearchError(
-            '검색하지 못했어요. 잠시 후 다시 시도해줘.',
+            '검색하지 못했어요. 잠시 후 다시 시도해 주세요.',
           );
         }
       } finally {
@@ -336,6 +397,8 @@ export default function App() {
       return;
     }
 
+    const activeConnection = connectionFilter;
+
     let cancelled = false;
 
     async function loadBundleAndActions() {
@@ -347,8 +410,8 @@ export default function App() {
         setActionLoading(false);
 
         const data = await getContentBundle(
-          connectionFilter.type,
-          connectionFilter.entity,
+          activeConnection.type,
+          activeConnection.entity,
         );
 
         if (cancelled) return;
@@ -523,7 +586,7 @@ export default function App() {
       if (!silent) {
         Alert.alert(
           '내용을 불러오지 못했어요',
-          '잠시 후 다시 시도해줘.',
+          '잠시 후 다시 시도해 주세요.',
         );
       }
     } finally {
@@ -581,9 +644,17 @@ export default function App() {
     name: 'home' | 'save' | 'library' | 'search' | 'more',
   ) {
     if (name === 'search') {
+      // search-tab-reset-v1: bottom Search must exit collection/comparison views.
+      setActiveSmartCollection(null);
+      setCollectionComparison(null);
+      setCollectionComparisonError(null);
       setConnectionFilter(null);
       setContentBundle(null);
       setBundleError(null);
+      setSearchMode('search');
+      setQuery('');
+      setSearchError(null);
+      setSearchResults(contents);
     }
 
     setScreen({ name });
@@ -617,6 +688,7 @@ export default function App() {
 
     setCollectionComparisonLoading(true);
     setCollectionComparisonError(null);
+    setExpandedComparisonEvidence(null);
 
     try {
       const result = await compareSmartCollection(
@@ -644,7 +716,7 @@ export default function App() {
       INSUFFICIENT_EVIDENCE: '확인 가능한 근거 부족',
     };
 
-    return labels[status] ?? '외부 확인';
+    return labels[status] ?? '추가 확인';
   }
 
   function openSmartCollection(
@@ -652,6 +724,7 @@ export default function App() {
   ) {
     setActiveSmartCollection(collection);
     setCollectionComparison(null);
+    setExpandedComparisonEvidence(null);
     setCollectionComparisonError(null);
     setConnectionFilter(null);
     setSearchMode('search');
@@ -799,7 +872,7 @@ export default function App() {
   function qualityMessage(type: string) {
     const messages: Record<string, string> = {
       LOW_CONFIDENCE_ENTITY:
-        '일부 정보가 확실하지 않아 한 번 확인하는 게 좋아요.',
+        '일부 내용은 원본을 확인해 주세요.',
       ENTITY_TYPE_CONFLICT:
         '같은 정보가 서로 다르게 정리되어 있어요.',
       CATEGORY_ENTITY_CONFLICT:
@@ -809,13 +882,13 @@ export default function App() {
       CANONICAL_TYPE_CONFLICT:
         '전에 확인한 정보와 이번에 정리된 내용이 달라요.',
       MISSING_STRUCTURED_ANALYSIS:
-        '일부 정보를 자동으로 확인하지 못했어요.',
+        '확인되지 않은 정보가 있어요.',
       VALIDATION_PARSE_ERROR:
-        '일부 정보를 자동으로 확인하지 못했어요.',
+        '확인되지 않은 정보가 있어요.',
     };
 
     return messages[type] ??
-      '확인이 필요한 정보가 있어요.';
+      '확인할 내용가 있어요.';
   }
 
   function actionDisplayTitle(
@@ -1071,15 +1144,15 @@ export default function App() {
       await loadConnections(true);
 
       Alert.alert(
-        '수정했어',
-        '바꾼 내용이 저장됐고 관련 검색과 활용 기능에도 반영했어.',
+        '수정했어요',
+        '바꾼 내용을 저장했어요. 검색 결과에도 반영돼요.',
       );
     } catch (error) {
       console.error('❌ AI 결과 수정 오류:', error);
 
       Alert.alert(
-        '수정하지 못했어',
-        '서버 상태를 확인한 뒤 다시 시도해줘.',
+        '수정하지 못했어요',
+        '잠시 후 다시 시도해 주세요.',
       );
     } finally {
       setCorrectionSaving(false);
@@ -1106,15 +1179,15 @@ export default function App() {
       );
 
       Alert.alert(
-        '다시 정리하고 있어요',
-        '앱을 나가도 작업은 계속 진행돼.',
+        '다시 정리하는 중이에요',
+        '앱을 닫아도 계속 진행돼요.',
       );
     } catch (error) {
       console.error('❌ 재분석 요청 오류:', error);
 
       Alert.alert(
-        '다시 시도하지 못했어요',
-        '잠시 후 다시 시도해줘.',
+        '다시 시도할 수 없어요',
+        '잠시 후 다시 시도해 주세요.',
       );
     }
   }
@@ -1221,8 +1294,8 @@ export default function App() {
 
       console.error('❌ 외부 URL 실행 오류:', error);
       Alert.alert(
-        '열지 못했어',
-        '외부 화면을 열지 못했어. 잠시 후 다시 시도해줘.',
+        '열지 못했어요',
+        '외부 화면을 열지 못했어요. 잠시 후 다시 시도해 주세요.',
       );
     }
   }
@@ -1231,7 +1304,7 @@ export default function App() {
     const encoded = encodeURIComponent(query);
 
     Alert.alert(
-      '지도 앱 선택',
+      '지도로 열기',
       `“${query}”을 어디에서 찾아볼까?`,
       [
         {
@@ -1266,8 +1339,8 @@ export default function App() {
 
     if (!eventDate) {
       Alert.alert(
-        '날짜를 확인할 수 없어',
-        '저장 콘텐츠에서 명확한 날짜가 확인된 경우에만 캘린더에 추가할 수 있어.',
+        '날짜를 확인할 수 없어요',
+        '영상에서 날짜가 확인되어야 일정에 추가할 수 있어요.',
       );
       return;
     }
@@ -1278,7 +1351,7 @@ export default function App() {
 
       if (permission.status !== 'granted') {
         Alert.alert(
-          '캘린더 권한이 필요해',
+          '캘린더 접근 권한이 필요해요',
           '설정에서 캘린더 접근을 허용하면 일정으로 추가할 수 있어.',
         );
         return;
@@ -1294,7 +1367,7 @@ export default function App() {
 
       if (!writableCalendar) {
         Alert.alert(
-          '사용 가능한 캘린더가 없어',
+          '사용할 수 있는 캘린더가 없어요',
           '기기에 수정 가능한 캘린더를 만든 뒤 다시 시도해줘.',
         );
         return;
@@ -1321,14 +1394,14 @@ export default function App() {
       );
 
       Alert.alert(
-        '캘린더에 추가했어',
+        '캘린더에 추가했어요',
         `${eventDate} · ${eventTitle}`,
       );
     } catch (error) {
       console.error('❌ 캘린더 추가 오류:', error);
       Alert.alert(
-        '일정을 추가하지 못했어',
-        '캘린더 상태를 확인한 뒤 다시 시도해줘.',
+        '일정을 추가하지 못했어요',
+        '캘린더를 확인한 뒤 다시 시도해 주세요.',
       );
     }
   }
@@ -1340,7 +1413,7 @@ export default function App() {
 
     if (items.length < 2) {
       Alert.alert(
-        '체크리스트를 만들 수 없어',
+        '체크리스트를 만들 수 없어요',
         '저장 콘텐츠에서 체크 항목을 충분히 찾지 못했어.',
       );
       return;
@@ -1374,7 +1447,7 @@ export default function App() {
     if (!query) return;
 
     Alert.alert(
-      '어디를 찾아볼까요?',
+      '어떤 장소를 찾으세요?',
       `“${query}”을 지도에서 찾아볼게요.`,
       [
         {
@@ -1422,7 +1495,7 @@ export default function App() {
 
     if (!eventDate) {
       Alert.alert(
-        '날짜를 확인할 수 없어',
+        '날짜를 확인할 수 없어요',
         '명확한 날짜가 있는 경우에만 캘린더에 추가할 수 있어.',
       );
       return;
@@ -1976,27 +2049,29 @@ export default function App() {
   async function saveUrl() {
     const trimmed = url.trim();
 
-    if (!trimmed.startsWith('http')) {
+
+    if (loading || uploading) return;
+    if (!isSaveLinkValid(trimmed)) {
       Alert.alert(
-        'URL을 확인해줘',
-        'https:// 로 시작하는 URL을 입력해줘.',
+        '링크를 확인해 주세요',
+        'https://로 시작하는 링크를 입력해 주세요.',
       );
       return;
     }
 
     const duplicate = contents.find(
-      (item) => item.sourceUrl === trimmed,
+      (item) => saveLinkIdentity(item.sourceUrl ?? '') === saveLinkIdentity(trimmed),
     );
 
     if (duplicate) {
       Alert.alert(
-        '이미 저장한 콘텐츠예요',
-        '기존에 저장한 내용을 바로 열어볼 수 있어요.',
+        '이미 저장한 영상이에요',
+        '이미 저장한 영상이에요. 바로 확인해 보세요.',
         [
           {
             text: '보러 가기',
             onPress: () =>
-              openDetail(duplicate.id, 'home'),
+              openDetail(duplicate.id, 'library'),
           },
           {
             text: '취소',
@@ -2008,11 +2083,13 @@ export default function App() {
     }
 
     try {
-      setLoading(true);
+      setLastSavedId(null);
+      setSubmittingUrl(true);
 
       const saved = await createContent(
         trimmed,
         inferApiPlatform(trimmed),
+        /^https?:\/\/(?:www\.)?instagram\.com\/reels?\//i.test(trimmed) && instagramThumbnailAllowed,
       );
 
       setContents((prev) => [
@@ -2020,21 +2097,30 @@ export default function App() {
         ...prev,
       ]);
 
+      setLastSavedId(String(saved.id));
       setUrl('');
+      setInstagramThumbnailAllowed(false);
 
       Alert.alert(
-        '저장했어요',
-        '앱을 나가도 내용 정리는 계속 진행돼. 끝나면 저장물에 자동으로 채워져요.',
+        '링크를 저장했어요',
+        '영상 내용은 계속 정리되고 있어요.',
+        [
+          { text: '계속 저장하기', style: 'cancel' },
+          {
+            text: '저장물 보기',
+            onPress: () => openDetail(String(saved.id), 'library'),
+          },
+        ],
       );
     } catch (error) {
       console.error('❌ 콘텐츠 저장 오류:', error);
 
       Alert.alert(
         '저장하지 못했어요',
-        '잠시 후 다시 시도해줘.',
+        '잠시 후 다시 시도해 주세요.',
       );
     } finally {
-      setLoading(false);
+      setSubmittingUrl(false);
     }
   }
 
@@ -2046,7 +2132,7 @@ export default function App() {
       if (!permission.granted) {
         Alert.alert(
           '사진 접근 권한 필요',
-          '영상 선택을 위해 사진 보관함 접근 권한을 허용해줘.',
+          '갤러리 접근 권한을 허용해 주세요.',
         );
         return;
       }
@@ -2076,6 +2162,7 @@ export default function App() {
         fileName,
       );
 
+      setLastSavedId(null);
       setUploading(true);
 
       const analyzed =
@@ -2097,6 +2184,7 @@ export default function App() {
         ],
       );
 
+      setLastSavedId(String(analyzed.id));
       loadConnections(true);
 
       Alert.alert(
@@ -2104,8 +2192,8 @@ export default function App() {
           ? '영상 정리가 끝났어요'
           : '영상을 저장했어요',
         analyzed.status === 'COMPLETED'
-          ? '영상에서 필요한 내용을 정리해 저장했어.'
-          : '내용을 정리하지 못했다면 저장물에서 다시 시도할 수 있어.',
+          ? '영상 내용을 정리해 저장했어요.'
+          : '정리에 실패했다면 보관함에서 다시 시도할 수 있어요.',
       );
     } catch (error) {
       console.error(
@@ -2115,12 +2203,17 @@ export default function App() {
 
       Alert.alert(
         '영상을 저장하지 못했어요',
-        '잠시 후 다시 시도해줘.',
+        '잠시 후 다시 시도해 주세요.',
       );
     } finally {
       setUploading(false);
     }
   }
+
+  const activeAnalyses = contents.filter(
+    (item) => item.analysisStatus === 'PENDING' || item.analysisStatus === 'ANALYZING',
+  );
+  const lastSavedItem = contents.find((item) => item.id === lastSavedId);
 
   function renderHome() {
     return (
@@ -2131,38 +2224,41 @@ export default function App() {
               SAVE:ON
             </Text>
 
-            <Text style={styles.h1}>
-              저장해둔 순간을{'\n'}
-              필요할 때 바로 꺼내 쓰게.
+            <Text style={[styles.h1, styles.homeTitle]}>
+              저장한 영상,{'\n'}
+              필요할 때 바로.
             </Text>
           </View>
 
           <View style={styles.logoBubble}>
-            <Text style={styles.logoText}>SO</Text>
+            <Ionicons name="bookmark" size={22} color="#FFFFFF" />
           </View>
         </View>
 
-        <View style={styles.hero}>
+        <View style={[styles.hero, styles.homeHero]}>
+            <BrandGradient variant="hero" radius={24} />
           <Text style={styles.heroLabel}>
             내 저장물
           </Text>
 
-          <Text style={styles.heroNumber}>
+          <Text style={[styles.heroNumber, styles.homeHeroNumber]}>
             {contents.length}
           </Text>
 
-          <Text style={styles.heroSub}>
+          <Text style={[styles.heroSub, styles.homeHeroSubtitle]}>
             {loading
               ? '저장한 내용을 불러오고 있어요.'
               : contents.length > 0
-                ? '저장한 영상과 링크를 필요할 때 다시 찾기 쉽게 정리해뒀어요.'
-                : '릴스나 쇼츠를 하나 저장해보세요. 필요한 내용만 알아서 정리해둘게요.'}
+                ? '저장한 영상을 한곳에 모아뒀어요.'
+                : '첫 릴스나 쇼츠를 저장해 보세요.'}
           </Text>
 
-          <Pressable
-            style={styles.primaryButton}
+          <View style={styles.homeQuickActions}>
+            <Pressable
+            style={[styles.primaryButton, styles.homePrimaryAction]}
             onPress={() => goTab('save')}
           >
+            <BrandGradient variant="primary" radius={14} />
             <Ionicons
               name="add"
               size={19}
@@ -2172,12 +2268,33 @@ export default function App() {
               새로 저장하기
             </Text>
           </Pressable>
+            <Pressable
+              style={styles.homeSearchAction}
+              onPress={() => goTab('search')}
+              accessibilityRole="button"
+              accessibilityLabel="저장물 검색"
+            >
+              <Ionicons name="search-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.homeSearchActionText}>검색</Text>
+            </Pressable>
+          </View>
         </View>
+
+        {activeAnalyses.length > 0 && (
+          <AnalysisProgress
+            variant="compact"
+            status={activeAnalyses[0].analysisStatus === 'PENDING' ? 'PENDING' : 'ANALYZING'}
+            stage={liveStages[activeAnalyses[0].id]}
+            title={activeAnalyses[0].title}
+            count={activeAnalyses.length}
+            onOpen={() => openDetail(activeAnalyses[0].id, 'home')}
+          />
+        )}
 
         {contents.length === 0 && (
           <View style={styles.onboardingCard}>
             <Text style={styles.onboardingTitle}>
-              이렇게 쓰면 돼요
+              이렇게 사용해 보세요
             </Text>
 
             <View style={styles.onboardingStep}>
@@ -2185,7 +2302,7 @@ export default function App() {
                 <Text style={styles.onboardingNumberText}>1</Text>
               </View>
               <Text style={styles.onboardingStepText}>
-                릴스·쇼츠 링크를 붙여넣거나 Save:on으로 공유해요.
+                릴스나 쇼츠 링크를 붙여넣어 저장하세요.
               </Text>
             </View>
 
@@ -2194,7 +2311,7 @@ export default function App() {
                 <Text style={styles.onboardingNumberText}>2</Text>
               </View>
               <Text style={styles.onboardingStepText}>
-                앱을 나가도 내용 정리는 계속돼요.
+                앱을 닫아도 정리는 계속돼요.
               </Text>
             </View>
 
@@ -2203,7 +2320,7 @@ export default function App() {
                 <Text style={styles.onboardingNumberText}>3</Text>
               </View>
               <Text style={styles.onboardingStepText}>
-                나중에 검색하거나 지도·캘린더 같은 기능으로 바로 활용해요.
+                필요할 때 검색하고, 일정이나 지도에 활용하세요.
               </Text>
             </View>
           </View>
@@ -2226,10 +2343,10 @@ export default function App() {
 
                 <View style={styles.homeAlertBody}>
                   <Text style={styles.homeAlertTitle}>
-                    확인이 필요한 정보가 {contentConflicts.length}개 있어요
+                    확인할 내용 {contentConflicts.length}개
                   </Text>
                   <Text style={styles.homeAlertText}>
-                    저장한 콘텐츠끼리 내용이 다른 부분을 확인해보세요.
+                    서로 다른 정보가 있는지 확인해 보세요.
                   </Text>
                 </View>
 
@@ -2241,124 +2358,20 @@ export default function App() {
               </Pressable>
             )}
 
-            <View style={styles.rowBetween}>
-              <View>
-                <Text style={styles.sectionTitle}>
-                  자동으로 묶인 주제
-                </Text>
-                <Text style={styles.smartSectionSubtitle}>
-                  비슷한 저장물을 주제별로 모아뒀어요.
-                </Text>
-              </View>
+            <InterestHighlights
+              timeline={interestTimeline}
+              loading={interestTimelineLoading}
+              expanded={interestExpanded}
+              onToggle={() => setInterestExpanded((previous) => !previous)}
+            />
 
-              {smartCollections.length > 0 && (
-                <Pressable onPress={() => goTab('more')}>
-                  <Text style={styles.linkText}>
-                    전체 보기
-                  </Text>
-                </Pressable>
-              )}
-            </View>
+            <SectionHeading
+              title="최근 저장"
+              actionLabel="전체 보기"
+              onAction={() => goTab('library')}
+            />
 
-            {smartCollectionsLoading ? (
-              <View style={styles.emptyBox}>
-                <ActivityIndicator
-                  size="small"
-                  color={theme.primary}
-                />
-              </View>
-            ) : smartCollections.length > 0 ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.smartCollectionRow}
-              >
-                {smartCollections.slice(0, 3).map((collection) => (
-                  <Pressable
-                    key={collection.key}
-                    style={styles.smartCollectionCard}
-                    onPress={() =>
-                      openSmartCollection(collection)
-                    }
-                  >
-                    <View style={styles.smartCollectionTop}>
-                      <View style={styles.smartCollectionIcon}>
-                        <Ionicons
-                          name="albums-outline"
-                          size={18}
-                          color={theme.primary}
-                        />
-                      </View>
-                      <Text style={styles.smartCollectionCount}>
-                        {collection.count}개
-                      </Text>
-                    </View>
-
-                    <Text
-                      style={styles.smartCollectionTitle}
-                      numberOfLines={2}
-                    >
-                      {collection.title}
-                    </Text>
-
-                    <Text
-                      style={styles.smartCollectionDescription}
-                      numberOfLines={3}
-                    >
-                      {collection.description}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            ) : (
-              <View style={styles.emptyBox}>
-                <Text style={styles.emptyText}>
-                  비슷한 주제의 저장물이 쌓이면 자동으로 모아드려요.
-                </Text>
-              </View>
-            )}
-
-            {connections.length > 0 && (
-              <Pressable
-                style={styles.homeInterestSummary}
-                onPress={() => goTab('more')}
-              >
-                <View style={styles.homeInterestBody}>
-                  <Text style={styles.homeInterestLabel}>
-                    내가 자주 저장한 관심사
-                  </Text>
-                  <Text
-                    style={styles.homeInterestText}
-                    numberOfLines={1}
-                  >
-                    {connections
-                      .slice(0, 3)
-                      .map((item) => item.entity)
-                      .join(' · ')}
-                  </Text>
-                </View>
-
-                <Ionicons
-                  name="chevron-forward"
-                  size={18}
-                  color={theme.muted}
-                />
-              </Pressable>
-            )}
-
-            <View style={styles.rowBetween}>
-              <Text style={styles.sectionTitle}>
-                최근 저장
-              </Text>
-
-              <Pressable onPress={() => goTab('library')}>
-                <Text style={styles.linkText}>
-                  전체 보기
-                </Text>
-              </Pressable>
-            </View>
-
-            {contents.slice(0, 3).map((item) => (
+            {contents.slice(0, 2).map((item) => (
               <ContentCard
                 key={item.id}
                 item={item}
@@ -2374,6 +2387,9 @@ export default function App() {
   }
 
   function renderSave() {
+    const saveLinkValid = isSaveLinkValid(url);
+    const saveLinkReady = saveLinkValid && !loading && !uploading;
+
     return (
       <ScrollView
         contentContainerStyle={styles.page}
@@ -2388,19 +2404,8 @@ export default function App() {
         </Text>
 
         <Text style={styles.bodyText}>
-          링크나 영상을 저장하면 내용을 읽고, 나중에 다시 찾기 쉽게 정리해둘게요.
+          릴스나 쇼츠를 저장해 보세요.
         </Text>
-
-        <View style={styles.saveNotice}>
-          <Ionicons
-            name="checkmark-circle-outline"
-            size={19}
-            color={theme.primary}
-          />
-          <Text style={styles.saveNoticeText}>
-            저장이 끝나면 앱을 나가도 괜찮아요. 내용 정리는 뒤에서 계속돼요.
-          </Text>
-        </View>
 
         <View style={styles.panel}>
           <View style={styles.inputLabelRow}>
@@ -2415,21 +2420,75 @@ export default function App() {
             </Text>
           </View>
 
-          <TextInput
+          <View style={styles.saveUxUrlInputWrap}>
+            <TextInput
             value={url}
-            onChangeText={setUrl}
+            onChangeText={(value) => {
+              setUrl(value);
+              setInstagramThumbnailAllowed(false);
+            }}
             placeholder="Instagram, YouTube 등의 링크"
             placeholderTextColor="#A7ABB4"
             autoCapitalize="none"
             autoCorrect={false}
-            style={styles.input}
+            keyboardType="url"
+            style={[styles.input, styles.saveUxUrlInput]}
           />
+            {url.length > 0 && (
+              <Pressable
+                style={styles.saveUxClear}
+                onPress={() => {
+                  setUrl('');
+                  setInstagramThumbnailAllowed(false);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="입력한 링크 지우기"
+                hitSlop={8}
+              >
+                <Ionicons name="close-circle" size={21} color={theme.muted} />
+              </Pressable>
+            )}
+          </View>
+
+          {url.trim().length > 0 && (
+            <View style={styles.saveUxFeedback}>
+              <Ionicons
+                name={saveLinkValid ? 'checkmark-circle-outline' : 'alert-circle-outline'}
+                size={15}
+                color={saveLinkValid ? theme.primary : '#B95A43'}
+              />
+              <Text style={[styles.saveUxFeedbackText, !saveLinkValid && styles.saveUxFeedbackError]}>
+                {saveLinkValid
+                  ? `${saveLinkPlatform(url)} 링크로 인식했어요.`
+                  : 'https://로 시작하는 올바른 링크를 입력해 주세요.'}
+              </Text>
+            </View>
+          )}
+
+          {/^https?:\/\/(?:www\.)?instagram\.com\/reels?\//i.test(url.trim()) && (
+            <Pressable
+              style={styles.instagramThumbnailPermission}
+              onPress={() => setInstagramThumbnailAllowed((old) => !old)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: instagramThumbnailAllowed }}
+            >
+              <Ionicons
+                name={instagramThumbnailAllowed ? 'checkbox' : 'square-outline'}
+                color={theme.primary}
+                size={21}
+              />
+              <Text style={styles.instagramThumbnailPermissionText}>
+                이 릴스의 대표 이미지를 저장·표시할 권한이 있어요.
+              </Text>
+            </Pressable>
+          )}
 
           <Pressable
-            style={styles.primaryButton}
+            style={[styles.primaryButton, !saveLinkReady && styles.saveUxButtonDisabled]}
             onPress={saveUrl}
-            disabled={loading || uploading}
-          >
+            disabled={!saveLinkReady || (submittingUrl || uploading)}
+           accessibilityRole="button" accessibilityState={{ disabled: !saveLinkReady || (submittingUrl || uploading), busy: loading }}>
+            <BrandGradient variant="primary" radius={14} />
             <Ionicons
               name="bookmark-outline"
               size={18}
@@ -2437,10 +2496,30 @@ export default function App() {
             />
 
             <Text style={styles.primaryButtonText}>
-              {loading ? '저장하는 중...' : '저장하기'}
+              {submittingUrl ? '저장하는 중...' : '저장하기'}
             </Text>
           </Pressable>
+
+          {loading && (
+            <View style={styles.saveUxProgress} accessibilityRole="progressbar">
+              <ActivityIndicator color={theme.primary} size="small" />
+              <Text style={styles.saveUxProgressText}>
+                링크를 저장하고 있어요. 잠시만 기다려 주세요.
+              </Text>
+            </View>
+          )}
         </View>
+
+        {/* Progress UI v2: keep the URL form above the status card. */}
+        {(submittingUrl || uploading || lastSavedItem) && (
+          <AnalysisProgress
+            variant="full"
+            status={submittingUrl ? 'SUBMITTING' : uploading ? 'UPLOADING' : lastSavedItem!.analysisStatus ?? 'PENDING'}
+            title={lastSavedItem?.title}
+            stage={lastSavedItem ? liveStages[lastSavedItem.id] : undefined}
+            onOpen={lastSavedItem ? () => openDetail(lastSavedItem.id, 'library') : undefined}
+          />
+        )}
 
         <View style={styles.panel}>
           <View style={styles.inputLabelRow}>
@@ -2451,12 +2530,12 @@ export default function App() {
             />
 
             <Text style={styles.inputLabel}>
-              내 영상에서 저장
+              내 영상 저장하기
             </Text>
           </View>
 
           <Text style={styles.bodyText}>
-            갤러리의 영상을 선택하면 말한 내용과 화면 속 정보를 함께 읽어 정리해요.
+            갤러리에서 영상을 골라 저장해 보세요.
           </Text>
 
           <Pressable
@@ -2465,7 +2544,7 @@ export default function App() {
               uploading && styles.disabledButton,
             ]}
             onPress={pickVideoFromGallery}
-            disabled={uploading || loading}
+            disabled={uploading || submittingUrl}
           >
             <Ionicons
               name={
@@ -2479,14 +2558,14 @@ export default function App() {
 
             <Text style={styles.secondaryButtonText}>
               {uploading
-                ? '영상을 정리하고 있어요...'
+                ? '영상 정리 중...'
                 : '갤러리에서 선택'}
             </Text>
           </Pressable>
 
           {uploading && (
             <Text style={styles.processingText}>
-              처음 사용하는 경우 준비 과정 때문에 조금 더 걸릴 수 있어요.
+              처음에는 시간이 조금 더 걸릴 수 있어요.
             </Text>
           )}
         </View>
@@ -2495,6 +2574,27 @@ export default function App() {
   }
 
   function renderLibrary() {
+    // Local Library search and sort; does not modify the global Search tab.
+    const librarySearchText = libraryQuery.trim().toLocaleLowerCase('ko-KR');
+    const libraryVisibleContents = filteredContents
+      .filter((item) => {
+        if (!librarySearchText) return true;
+        const searchableText = [
+          item.title, item.summary, item.platform,
+          ...item.category, ...item.keywords, ...item.entities,
+        ].join(' ').toLocaleLowerCase('ko-KR');
+        return searchableText.includes(librarySearchText);
+      })
+      .slice()
+      .sort((a, b) => {
+        if (librarySort === 'title') return a.title.localeCompare(b.title, 'ko');
+        const aId = Number(a.id);
+        const bId = Number(b.id);
+        const aOrder = Number.isFinite(aId) ? aId : (Date.parse(a.savedAt) || 0);
+        const bOrder = Number.isFinite(bId) ? bId : (Date.parse(b.savedAt) || 0);
+        return librarySort === 'oldest' ? aOrder - bOrder : bOrder - aOrder;
+      });
+
     return (
       <ScrollView contentContainerStyle={styles.page}>
         <Text style={styles.eyebrow}>SAVE:ON</Text>
@@ -2527,48 +2627,34 @@ export default function App() {
           </Text>
         </Pressable>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipRow}
-        >
-          {categories.map((cat) => {
-            const selected =
-              selectedCategory === cat;
+        <LibraryFindBar
+          query={libraryQuery}
+          onQueryChange={setLibraryQuery}
+          sort={librarySort}
+          onSortChange={setLibrarySort}
+          resultCount={libraryVisibleContents.length}
+          totalCount={filteredContents.length}
+        />
 
-            return (
-              <Pressable
-                key={cat}
-                style={[
-                  styles.chip,
-                  selected && styles.chipSelected,
-                ]}
-                onPress={() =>
-                  setSelectedCategory(cat)
-                }
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    selected &&
-                      styles.chipTextSelected,
-                  ]}
-                >
-                  {cat}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+        <CategoryFilter
+          categories={categories}
+          selected={selectedCategory}
+          items={contents}
+          onSelect={setSelectedCategory}
+        />
 
-        {filteredContents.length === 0 ? (
+        {libraryVisibleContents.length === 0 ? (
           <View style={styles.emptyBox}>
             <Text style={styles.emptyText}>
-              아직 저장한 콘텐츠가 없어요. 릴스나 쇼츠를 공유해서 첫 저장물을 만들어보세요.
+              {libraryQuery.trim()
+                ? '검색 결과가 없어요. 다른 단어로 검색해 보세요.'
+                : contents.length === 0
+                  ? '아직 저장한 영상이 없어요. 첫 영상을 저장해 보세요.'
+                  : '이 카테고리에는 저장한 영상이 없어요.'}
             </Text>
           </View>
         ) : (
-          filteredContents.map((item) => (
+          libraryVisibleContents.map((item) => (
             <ContentCard
               key={item.id}
               item={item}
@@ -2640,190 +2726,15 @@ export default function App() {
         </Text>
 
         <Text style={styles.bodyText}>
-          저장한 내용을 주제별로 보고, 반복되는 관심사와 확인이 필요한 정보를 한곳에서 볼 수 있어요.
+          저장한 영상을 주제별로 모아봤어요.
         </Text>
-
-        <View style={styles.interestTimelineSection}>
-          <View style={styles.moreSectionHeader}>
-            <View>
-              <Text style={styles.sectionTitle}>
-                최근 관심 변화
-              </Text>
-              <Text style={styles.moreSectionSubtitle}>
-                최근 7일과 그 전 7일의 저장 패턴을 비교했어요.
-              </Text>
-            </View>
-          </View>
-
-          {interestTimelineLoading ? (
-            <View style={styles.interestTimelineCard}>
-              <ActivityIndicator
-                size="small"
-                color={theme.primary}
-              />
-              <Text style={styles.connectionLoadingText}>
-                최근 관심 흐름을 정리하고 있어요.
-              </Text>
-            </View>
-          ) : interestTimeline ? (
-            <View style={styles.interestTimelineCard}>
-              <View style={styles.interestTimelineSummaryRow}>
-                <View style={styles.interestTimelineIcon}>
-                  <Ionicons
-                    name="trending-up-outline"
-                    size={19}
-                    color={theme.primary}
-                  />
-                </View>
-                <Text style={styles.interestTimelineSummary}>
-                  {interestTimeline.summary}
-                </Text>
-              </View>
-
-              <View style={styles.interestTimelineStats}>
-                <View style={styles.interestTimelineStat}>
-                  <Text style={styles.interestTimelineStatValue}>
-                    {interestTimeline.recentCount}
-                  </Text>
-                  <Text style={styles.interestTimelineStatLabel}>
-                    최근 7일
-                  </Text>
-                </View>
-                <View style={styles.interestTimelineStat}>
-                  <Text style={styles.interestTimelineStatValue}>
-                    {interestTimeline.previousCount}
-                  </Text>
-                  <Text style={styles.interestTimelineStatLabel}>
-                    이전 7일
-                  </Text>
-                </View>
-                <View style={styles.interestTimelineStat}>
-                  <Text style={styles.interestTimelineStatValue}>
-                    {interestTimeline.last30DaysCount}
-                  </Text>
-                  <Text style={styles.interestTimelineStatLabel}>
-                    최근 30일
-                  </Text>
-                </View>
-              </View>
-
-              {interestTimeline.categoryTrends.length > 0 && (
-                <View style={styles.interestTimelineBlock}>
-                  <Text style={styles.interestTimelineBlockTitle}>
-                    카테고리 변화
-                  </Text>
-                  <View style={styles.interestTrendList}>
-                    {interestTimeline.categoryTrends.map((trend) => {
-                      const isUp = trend.delta > 0;
-                      const isDown = trend.delta < 0;
-                      return (
-                        <View
-                          key={`trend:${trend.label}`}
-                          style={styles.interestTrendRow}
-                        >
-                          <Text
-                            style={styles.interestTrendLabel}
-                            numberOfLines={1}
-                          >
-                            {trend.label}
-                          </Text>
-                          <View style={styles.interestTrendValueRow}>
-                            <Text style={styles.interestTrendCount}>
-                              {trend.currentCount}개
-                            </Text>
-                            <Ionicons
-                              name={
-                                isUp
-                                  ? 'arrow-up-outline'
-                                  : isDown
-                                    ? 'arrow-down-outline'
-                                    : 'remove-outline'
-                              }
-                              size={13}
-                              color={
-                                isUp
-                                  ? theme.primary
-                                  : isDown
-                                    ? '#8A7F76'
-                                    : theme.muted
-                              }
-                            />
-                            <Text
-                              style={[
-                                styles.interestTrendDelta,
-                                isUp && styles.interestTrendDeltaUp,
-                              ]}
-                            >
-                              {trend.delta > 0 ? '+' : ''}{trend.delta}
-                            </Text>
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
-              )}
-
-              {interestTimeline.emergingInterests.length > 0 && (
-                <View style={styles.interestTimelineBlock}>
-                  <Text style={styles.interestTimelineBlockTitle}>
-                    새롭게 반복되는 관심사
-                  </Text>
-                  <View style={styles.interestTimelineChips}>
-                    {interestTimeline.emergingInterests.map((item) => (
-                      <View
-                        key={`emerging:${item.type}:${item.label}`}
-                        style={styles.interestTimelineChipStrong}
-                      >
-                        <Ionicons
-                          name="sparkles-outline"
-                          size={12}
-                          color={theme.primary}
-                        />
-                        <Text style={styles.interestTimelineChipStrongText}>
-                          {item.label} · {item.count}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              )}
-
-              {interestTimeline.topInterests.length > 0 && (
-                <View style={styles.interestTimelineBlock}>
-                  <Text style={styles.interestTimelineBlockTitle}>
-                    최근 30일 자주 저장한 관심사
-                  </Text>
-                  <View style={styles.interestTimelineChips}>
-                    {interestTimeline.topInterests.map((item) => (
-                      <View
-                        key={`top:${item.type}:${item.label}`}
-                        style={styles.interestTimelineChip}
-                      >
-                        <Text style={styles.interestTimelineChipText}>
-                          {item.label} · {item.count}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              )}
-            </View>
-          ) : (
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyText}>
-                저장물이 쌓이면 최근 관심 변화를 자동으로 보여드려요.
-              </Text>
-            </View>
-          )}
-        </View>
 
         {(smartRemindersLoading || smartReminders.length > 0) && (
           <View style={styles.smartReminderSection}>
             <View style={styles.moreSectionHeader}>
               <View>
                 <Text style={styles.sectionTitle}>
-                  다시 볼 타이밍
+                  다시 볼 만한 영상
                 </Text>
                 <Text style={styles.moreSectionSubtitle}>
                   날짜, 혜택, 여행, 반복 관심사를 바탕으로 지금 다시 보기 좋은 저장물이에요.
@@ -2925,10 +2836,10 @@ export default function App() {
             <View style={styles.moreSectionHeader}>
               <View>
                 <Text style={styles.sectionTitle}>
-                  확인이 필요한 정보
+                  확인할 내용
                 </Text>
                 <Text style={styles.moreSectionSubtitle}>
-                  저장한 콘텐츠끼리 내용이 다른 부분이에요.
+                  서로 다른 정보가 있는지 확인해 보세요.
                 </Text>
               </View>
 
@@ -3029,85 +2940,18 @@ export default function App() {
           </View>
         )}
 
-        <View style={styles.moreSection}>
-          <View style={styles.moreSectionHeader}>
-            <View>
-              <Text style={styles.sectionTitle}>
-                자동으로 묶인 주제
-              </Text>
-              <Text style={styles.moreSectionSubtitle}>
-                비슷한 저장물을 주제별로 모아뒀어요.
-              </Text>
-            </View>
-          </View>
-
-          {smartCollectionsLoading ? (
-            <View style={styles.emptyBox}>
-              <ActivityIndicator
-                size="small"
-                color={theme.primary}
-              />
-              <Text style={styles.connectionLoadingText}>
-                저장물을 주제별로 묶고 있어요.
-              </Text>
-            </View>
-          ) : smartCollections.length > 0 ? (
-            <View style={styles.moreCollectionGrid}>
-              {smartCollections.map((collection) => (
-                <Pressable
-                  key={collection.key}
-                  style={styles.moreCollectionCard}
-                  onPress={() =>
-                    openSmartCollection(collection)
-                  }
-                >
-                  <View style={styles.smartCollectionTop}>
-                    <View style={styles.smartCollectionIcon}>
-                      <Ionicons
-                        name="albums-outline"
-                        size={18}
-                        color={theme.primary}
-                      />
-                    </View>
-
-                    <Text style={styles.smartCollectionCount}>
-                      {collection.count}개
-                    </Text>
-                  </View>
-
-                  <Text
-                    style={styles.smartCollectionTitle}
-                    numberOfLines={2}
-                  >
-                    {collection.title}
-                  </Text>
-
-                  <Text
-                    style={styles.smartCollectionDescription}
-                    numberOfLines={3}
-                  >
-                    {collection.description}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : (
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyText}>
-                비슷한 주제의 저장물이 2개 이상 쌓이면 자동으로 모아드려요.
-              </Text>
-            </View>
-          )}
-        </View>
+        <CollectionOverview
+          collections={smartCollections}
+          loading={smartCollectionsLoading}
+          onOpen={openSmartCollection}
+        />
 
         <View style={styles.moreSection}>
-          <Text style={styles.sectionTitle}>
-            내가 자주 저장한 관심사
-          </Text>
-
-          <Text style={styles.moreSectionSubtitle}>
-            반복해서 저장한 장소, 브랜드, 제품 등을 모아서 보여줘요.
-          </Text>
+          <SectionHeading
+            title="자주 저장한 주제"
+            subtitle="반복해서 저장한 장소, 브랜드, 제품 등을 살펴보세요."
+            icon="bookmark-outline"
+          />
 
           <View style={styles.moreConnections}>
             {connectionsLoading ? (
@@ -3153,7 +2997,7 @@ export default function App() {
             ) : (
               <View style={styles.emptyBox}>
                 <Text style={styles.emptyText}>
-                  같은 장소나 브랜드를 여러 번 저장하면 여기에서 모아볼 수 있어요.
+                  같은 장소나 브랜드의 영상이 모이면 여기서 볼 수 있어요.
                 </Text>
               </View>
             )}
@@ -3178,7 +3022,7 @@ export default function App() {
             ? activeSmartCollection.title
             : connectionFilter
               ? `${connectionFilter.entity} 모아보기`
-              : '내 저장물 찾기'}
+              : '저장물 검색'}
         </Text>
 
         {!connectionFilter && !activeSmartCollection && (
@@ -3259,11 +3103,9 @@ export default function App() {
               </View>
               <View style={styles.smartCollectionDetailHeaderText}>
                 <Text style={styles.smartCollectionDetailEyebrow}>
-                  자동 컬렉션
+                  영상 모음
                 </Text>
-                <Text style={styles.smartCollectionDetailTitle}>
-                  {activeSmartCollection.title}
-                </Text>
+
               </View>
             </View>
 
@@ -3287,7 +3129,7 @@ export default function App() {
             )}
 
             <Text style={styles.smartCollectionDetailMeta}>
-              {activeSmartCollection.count}개의 저장물을 비슷한 주제로 묶었어요.
+              관련 영상 {activeSmartCollection.count}개
             </Text>
 
             <Pressable
@@ -3295,6 +3137,7 @@ export default function App() {
               onPress={runCollectionComparison}
               disabled={collectionComparisonLoading}
             >
+              <BrandGradient variant="primary" radius={15} />
               {collectionComparisonLoading ? (
                 <ActivityIndicator
                   size="small"
@@ -3311,13 +3154,13 @@ export default function App() {
                 {collectionComparisonLoading
                   ? '비교하는 중...'
                   : collectionComparison
-                  ? '비교 다시 보기'
-                  : '저장물 비교하기'}
+                  ? '다시 비교하기'
+                  : '영상 비교하기'}
               </Text>
             </Pressable>
 
             <Text style={styles.collectionCompareHint}>
-              같은 제품·장소·브랜드가 여러 저장물에 반복될 때 공통점과 엇갈리는 점을 비교해요. 객관적 수치가 서로 다를 때만 외부 정보를 확인해요.
+              여러 영상에서 같은 내용과 다른 내용을 확인해 보세요.
             </Text>
 
             {collectionComparisonError && (
@@ -3337,7 +3180,7 @@ export default function App() {
                     />
                     <View style={styles.collectionCompareNotEligibleText}>
                       <Text style={styles.collectionComparisonTitle}>
-                        비교보다 모아보기가 더 잘 맞아요
+                        비교할 공통 정보가 부족해요
                       </Text>
                       <Text style={styles.collectionComparisonSummary}>
                         {collectionComparison.reason}
@@ -3346,6 +3189,14 @@ export default function App() {
                   </View>
                 ) : (
                   <>
+                    <ComparisonDigest
+                      summary={collectionComparison.summary}
+                      commonCount={collectionComparison.commonPoints.length}
+                      differenceCount={collectionComparison.disagreements.length}
+                      uniqueCount={collectionComparison.uniqueMentions.length}
+                      expanded={comparisonDetailsExpanded}
+                      onToggle={() => setComparisonDetailsExpanded((value) => !value)}
+                    />
                     <View style={styles.collectionComparisonHeader}>
                       <Ionicons
                         name="git-compare-outline"
@@ -3353,19 +3204,15 @@ export default function App() {
                         color={theme.primary}
                       />
                       <View style={styles.collectionComparisonHeaderText}>
-                        <Text style={styles.collectionComparisonTitle}>
-                          {collectionComparison.title}
-                        </Text>
+
                         <Text style={styles.collectionComparisonEntity}>
                           비교 대상 · {collectionComparison.comparisonEntity}
                         </Text>
-                        <Text style={styles.collectionComparisonSummary}>
-                          {collectionComparison.summary}
-                        </Text>
+
                       </View>
                     </View>
 
-                    {collectionComparison.disagreements.length > 0 && (
+                    {comparisonDetailsExpanded && collectionComparison.disagreements.length > 0 && (
                       <View style={styles.collectionComparisonSection}>
                         <View style={styles.collectionComparisonSectionHeader}>
                           <Ionicons
@@ -3374,11 +3221,11 @@ export default function App() {
                             color="#A45B3D"
                           />
                           <Text style={styles.collectionComparisonSectionTitle}>
-                            엇갈리는 점
+                            서로 다른 내용
                           </Text>
                         </View>
                         <Text style={styles.collectionComparisonSectionHint}>
-                          같은 항목을 두고 영상마다 다르게 말한 부분이에요. 어느 쪽이 맞다고 단정하지 않아요.
+                          같은 내용에 대해 서로 다른 이야기를 했어요. 원본도 함께 확인해 보세요.
                         </Text>
 
                         {collectionComparison.disagreements.map(
@@ -3394,7 +3241,9 @@ export default function App() {
                                 {finding.statement}
                               </Text>
 
-                              {finding.evidences.map((evidence) => (
+                              {finding.evidences.length > 0 && (
+<ExpandableEvidence label="영상별 원문 근거 보기">
+{finding.evidences.map((evidence) => (
                                 <View
                                   key={`disagreement-evidence:${index}:${evidence.contentId}:${evidence.quote}`}
                                   style={styles.collectionComparisonEvidenceCard}
@@ -3418,13 +3267,15 @@ export default function App() {
                                   )}
                                 </View>
                               ))}
+</ExpandableEvidence>
+)}
                             </View>
                           ),
                         )}
                       </View>
                     )}
 
-                    {collectionComparison.commonPoints.length > 0 && (
+                    {comparisonDetailsExpanded && collectionComparison.commonPoints.length > 0 && (
                       <View style={styles.collectionComparisonSection}>
                         <View style={styles.collectionComparisonSectionHeader}>
                           <Ionicons
@@ -3448,19 +3299,30 @@ export default function App() {
                               <Text style={styles.collectionComparisonFindingStatement}>
                                 {finding.statement}
                               </Text>
-                              <Text style={styles.collectionComparisonEvidence}>
-                                근거 · {finding.evidences
-                                  .map((evidence) => evidence.title)
-                                  .filter(Boolean)
-                                  .join(' / ')}
-                              </Text>
+                              <Pressable onPress={() =>
+                                setExpandedComparisonEvidence(
+                                  expandedComparisonEvidence === `common:${index}`
+                                    ? null : `common:${index}`
+                                )
+                              }>
+                                <Text style={styles.collectionComparisonEvidence}>
+                                  {finding.evidences.length}개 영상 근거 {expandedComparisonEvidence === `common:${index}` ? '접기 ▲' : '보기 ▼'}
+                                </Text>
+                              </Pressable>
+                              {expandedComparisonEvidence === `common:${index}` &&
+                                finding.evidences.map((ev) => (
+                                  <Text key={`common-ev:${index}:${ev.contentId}`}
+                                        style={styles.collectionComparisonEvidence}>
+                                    #{ev.contentId} · {ev.quote}
+                                  </Text>
+                                ))}
                             </View>
                           ),
                         )}
                       </View>
                     )}
 
-                    {collectionComparison.uniqueMentions.length > 0 && (
+                    {comparisonDetailsExpanded && collectionComparison.uniqueMentions.length > 0 && (
                       <View style={styles.collectionComparisonSection}>
                         <View style={styles.collectionComparisonSectionHeader}>
                           <Ionicons
@@ -3469,7 +3331,7 @@ export default function App() {
                             color={theme.primary}
                           />
                           <Text style={styles.collectionComparisonSectionTitle}>
-                            한 영상에만 나온 정보
+                            영상별 정보
                           </Text>
                         </View>
 
@@ -3482,16 +3344,32 @@ export default function App() {
                               <Text style={styles.collectionComparisonDimensionTitle}>
                                 {finding.topic}
                               </Text>
+                              {finding.evidences[0] && (
+                                <Text style={styles.collectionComparisonItemTitle} numberOfLines={2}>
+                                  #{finding.evidences[0].contentId} · {finding.evidences[0].title}
+                                </Text>
+                              )}
                               <Text style={styles.collectionComparisonFindingStatement}>
                                 {finding.statement}
                               </Text>
                               {finding.evidences[0] && (
-                                <Text style={styles.collectionComparisonEvidence}>
-                                  근거 · {finding.evidences[0].title}
-                                  {finding.evidences[0].quote
-                                    ? ` · “${finding.evidences[0].quote}”`
-                                    : ''}
-                                </Text>
+                                <>
+                                  <Pressable onPress={() =>
+                                    setExpandedComparisonEvidence(
+                                      expandedComparisonEvidence === `unique:${index}`
+                                        ? null : `unique:${index}`
+                                    )
+                                  }>
+                                    <Text style={styles.collectionComparisonEvidence}>
+                                      {expandedComparisonEvidence === `unique:${index}` ? '저장된 근거 접기 ▲' : '저장된 근거 보기 ▼'}
+                                    </Text>
+                                  </Pressable>
+                                  {expandedComparisonEvidence === `unique:${index}` && (
+                                    <Text style={styles.collectionComparisonEvidence}>
+                                      “{finding.evidences[0].quote}”
+                                    </Text>
+                                  )}
+                                </>
                               )}
                             </View>
                           ),
@@ -3499,7 +3377,7 @@ export default function App() {
                       </View>
                     )}
 
-                    {collectionComparison.externalFacts.length > 0 && (
+                    {comparisonDetailsExpanded && collectionComparison.externalFacts.length > 0 && (
                       <View style={styles.collectionExternalSection}>
                         <View style={styles.collectionExternalHeader}>
                           <Ionicons
@@ -3508,11 +3386,11 @@ export default function App() {
                             color="#8A651F"
                           />
                           <Text style={styles.collectionExternalTitle}>
-                            외부 확인
+                            추가 확인
                           </Text>
                         </View>
                         <Text style={styles.collectionExternalHint}>
-                          저장한 영상끼리 가격·날짜·용량 같은 객관 정보가 달랐던 항목만 현재 공식 정보를 확인했어요.
+                          영상마다 가격이나 날짜가 다르면 공식 정보를 함께 확인해요.
                         </Text>
 
                         {collectionComparison.externalFacts.map(
@@ -3542,7 +3420,7 @@ export default function App() {
                               {!!fact.currentValue && (
                                 <>
                                   <Text style={styles.collectionExternalSavedLabel}>
-                                    현재 외부 확인
+                                    현재 추가 확인
                                   </Text>
                                   <Text style={styles.collectionExternalValue}>
                                     {fact.currentValue}
@@ -3598,7 +3476,7 @@ export default function App() {
                         color={theme.muted}
                       />
                       <Text style={styles.collectionComparisonDecisionText}>
-                        Save:on은 무엇을 사거나 어디를 갈지 대신 결정하지 않고, 저장한 영상의 공통점과 차이를 판단 재료로 정리해요.
+                        가격과 날짜처럼 중요한 정보는 원본에서도 확인해 주세요.
                       </Text>
                     </View>
                   </>
@@ -3632,10 +3510,10 @@ export default function App() {
 
               <View style={styles.knowledgeHeaderText}>
                 <Text style={styles.knowledgeTitle}>
-                  내 저장물에 질문하기
+                  저장한 내용에 질문하기
                 </Text>
                 <Text style={styles.knowledgeSubtitle}>
-                  답변은 내가 저장한 콘텐츠만 근거로 만들어요.
+                  저장한 영상에서 답을 찾아요.
                 </Text>
               </View>
             </View>
@@ -3708,7 +3586,7 @@ export default function App() {
                   color={theme.primary}
                 />
                 <Text style={styles.knowledgeLoadingText}>
-                  관련 저장물을 찾고 답변을 정리하고 있어요.
+                  답변 찾는 중이에요.
                 </Text>
               </View>
             )}
@@ -3730,7 +3608,7 @@ export default function App() {
                     color={theme.primary}
                   />
                   <Text style={styles.knowledgeAnswerLabel}>
-                    저장물에서 찾은 답
+                    찾은 답변
                   </Text>
                 </View>
 
@@ -3741,7 +3619,7 @@ export default function App() {
                 {knowledgeAnswer.sources.length > 0 && (
                   <View style={styles.knowledgeSources}>
                     <Text style={styles.knowledgeSourcesTitle}>
-                      답변에 참고한 저장물
+                      참고한 영상
                     </Text>
 
                     {knowledgeAnswer.sources.map((source) => (
@@ -3785,7 +3663,7 @@ export default function App() {
 
                 {!knowledgeAnswer.grounded && (
                   <Text style={styles.knowledgeGroundingNote}>
-                    충분한 근거가 없으면 저장한 내용 밖의 사실은 추측하지 않아요.
+                    저장한 내용에서 확인되지 않은 정보는 답변에서 제외해요.
                   </Text>
                 )}
               </View>
@@ -3859,7 +3737,7 @@ export default function App() {
             ) : searchResults.length === 0 ? (
               <View style={styles.emptyBox}>
                 <Text style={styles.emptyText}>
-                  아직 맞는 저장물을 찾지 못했어요. 다른 표현으로 한 번 더 검색해보세요.
+                  검색 결과가 없어요. 다른 단어로 검색해 보세요.
                 </Text>
               </View>
             ) : (
@@ -3983,12 +3861,12 @@ export default function App() {
               return '외부 근거와 내용이 다른 정보가 있어요.';
             }
             if (verdict === 'PARTIALLY_SUPPORTED') {
-              return '일부 내용만 근거로 확인됐어요.';
+              return '일부 내용만 확인됐어요.';
             }
             return '충분한 근거를 찾지 못한 정보가 있어요.';
           }),
         ...(verificationCorrections.length > 0
-          ? ['검증 과정에서 바로잡은 정보가 있어요.']
+          ? ['확인 과정에서 수정된 정보가 있어요.']
           : []),
         ...(unverifiedNotes.length > 0
           ? ['아직 확인되지 않은 내용이 포함되어 있어요.']
@@ -4028,14 +3906,30 @@ export default function App() {
 
         <View style={styles.detailHero}>
           <View style={styles.detailPlatformRow}>
-            <Text style={styles.detailEmoji}>
-              {detailItem.thumbnailEmoji}
-            </Text>
+            <VideoThumbnail sourceUrl={detailItem.sourceUrl} contentId={detailItem.id} thumbnailAvailable={detailItem.thumbnailAvailable} fallback={detailItem.thumbnailEmoji} variant="detail" />
 
             <Text style={styles.platformBadge}>
               {detailItem.platform}
             </Text>
           </View>
+
+          <Text style={styles.detailTitle}>
+            {detailItem.title}
+          </Text>
+
+          {canOpenSource && (
+            <Pressable
+              style={styles.detailOpenSourceButton}
+              onPress={() => Linking.openURL(detailItem.sourceUrl!)}
+              accessibilityRole="button"
+              accessibilityLabel="원본 영상 열기"
+              hitSlop={6}
+            >
+              <Ionicons name="open-outline" size={15} color={theme.primary} />
+              <Text style={styles.detailOpenSourceLabel}>원본 보기</Text>
+              <Ionicons name="chevron-forward" size={14} color={theme.primary} />
+            </Pressable>
+          )}
 
           {detailRawContent?.status === 'COMPLETED' &&
             (detailItem.category.length > 0 ||
@@ -4091,7 +3985,7 @@ export default function App() {
                       주요 정보
                     </Text>
                     <View style={styles.detailMetaValues}>
-                      {savedEntities.slice(0, 5).map(
+                      {savedEntities.slice(0, expandedDetailEntityId === detailItem.id ? undefined : 3).map(
                         (entity, index) => (
                           <View
                             key={`${entity.type}:${entity.name}:${index}`}
@@ -4108,6 +4002,25 @@ export default function App() {
                           </View>
                         ),
                       )}
+                    {savedEntities.length > 3 && (
+                      <Pressable
+                        style={styles.detailEntityExpandButton}
+                        onPress={() => setExpandedDetailEntityId((current) =>
+                          current === detailItem.id ? null : detailItem.id
+                        )}
+                        accessibilityRole="button"
+                        accessibilityLabel={expandedDetailEntityId === detailItem.id ? '주요 정보 접기' : '주요 정보 더 보기'}
+                      >
+                        <Text style={styles.detailEntityExpandLabel}>
+                          {expandedDetailEntityId === detailItem.id ? '접기' : `+${savedEntities.length - 3}개 더 보기`}
+                        </Text>
+                        <Ionicons
+                          name={expandedDetailEntityId === detailItem.id ? 'chevron-up' : 'chevron-down'}
+                          size={13}
+                          color={theme.primary}
+                        />
+                      </Pressable>
+                    )}
                     </View>
                   </View>
                 )}
@@ -4127,9 +4040,6 @@ export default function App() {
               </View>
             )}
 
-          <Text style={styles.detailTitle}>
-            {detailItem.title}
-          </Text>
         </View>
 
         {detailRawContent?.status === 'FAILED' && (
@@ -4146,7 +4056,7 @@ export default function App() {
             </View>
 
             <Text style={styles.retryBody}>
-              원본 콘텐츠 상태에 따라 일시적으로 실패할 수 있어요. 저장물은 그대로 남아 있어요.
+              원본 영상 상태에 따라 일시적으로 실패할 수 있어요. 저장물은 그대로 남아 있어요.
             </Text>
 
             <Pressable
@@ -4171,7 +4081,7 @@ export default function App() {
                 내용을 정리하고 있어요
               </Text>
               <Text style={styles.processingPanelBody}>
-                앱을 나가도 괜찮아요. 끝나면 이 화면에 자동으로 반영돼요.
+                앱을 닫아도 정리는 계속돼요. 완료되면 여기에 표시돼요.
               </Text>
             </View>
           </View>
@@ -4183,10 +4093,10 @@ export default function App() {
               <View style={styles.userSectionHeader}>
                 <View>
                   <Text style={styles.userSectionEyebrow}>
-                    AI가 정리한 내용
+                    내용 요약
                   </Text>
                   <Text style={styles.userSectionTitle}>
-                    핵심만 빠르게 보기
+                    핵심 내용
                   </Text>
                 </View>
 
@@ -4204,9 +4114,7 @@ export default function App() {
                 )}
               </View>
 
-              <Text style={styles.detailSummaryText}>
-                {detailItem.summary}
-              </Text>
+              <DetailSummaryText text={detailItem.summary} />
             </View>
 
 
@@ -4216,11 +4124,11 @@ export default function App() {
                   <View>
                     <Text style={styles.correctionEditorTitle}>
                       {correctionFocus === 'summary'
-                        ? '정리된 내용 수정'
+                        ? '요약 수정'
                         : '저장된 정보 수정'}
                     </Text>
                     <Text style={styles.correctionEditorSubtitle}>
-                      필요한 부분만 바꾸면 돼요.
+                      잘못된 부분만 고쳐 주세요.
                     </Text>
                   </View>
 
@@ -4323,7 +4231,7 @@ export default function App() {
                           저장된 주요 정보
                         </Text>
                         <Text style={styles.correctionHint}>
-                          장소·브랜드·제품처럼 나중에 다시 찾을 때 중요한 정보예요.
+                          검색할 때 도움이 되는 장소·브랜드·제품이에요.
                         </Text>
                       </View>
 
@@ -4444,16 +4352,16 @@ export default function App() {
 
                   <View style={styles.evidenceReviewHeaderText}>
                     <Text style={styles.evidenceReviewTitle}>
-                      확인 필요한 정보
+                      확인할 내용
                     </Text>
                     <Text style={styles.evidenceReviewSubtitle}>
-                      일부 내용은 근거가 부족하거나 서로 다를 수 있어요.
+                      일부 정보는 확인이 필요해요. 원본을 함께 살펴보세요.
                     </Text>
                   </View>
 
                   <View style={styles.evidenceReviewBadge}>
                     <Text style={styles.evidenceReviewBadgeText}>
-                      검토 필요
+                      확인 필요
                     </Text>
                   </View>
                 </View>
@@ -4475,7 +4383,7 @@ export default function App() {
                 )}
 
                 <Text style={styles.evidenceSourceLabel}>
-                  근거/출처
+                  출처 보기
                 </Text>
 
                 <View style={styles.evidenceSourceWrap}>
@@ -4486,7 +4394,7 @@ export default function App() {
                       color={theme.primary}
                     />
                     <Text style={styles.evidenceSourceText}>
-                      AI 분석 결과
+                      분석 결과
                     </Text>
                   </View>
 
@@ -4511,7 +4419,7 @@ export default function App() {
                         color={theme.primary}
                       />
                       <Text style={styles.evidenceSourceText}>
-                        원본 콘텐츠
+                        원본 영상
                       </Text>
                     </View>
                   )}
@@ -4566,31 +4474,12 @@ export default function App() {
             )}
 
             {renderActionAgentPanel(
-              '저장한 내용을 바탕으로 지금 바로 쓸 수 있는 기능이에요.',
+              '저장한 내용으로 할 수 있는 일이에요.',
             )}
           </>
         )}
 
-        {canOpenSource && (
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={() =>
-              Linking.openURL(
-                detailItem.sourceUrl!,
-              )
-            }
-          >
-            <Ionicons
-              name="open-outline"
-              size={18}
-              color={theme.text}
-            />
-            <Text style={styles.secondaryButtonText}>
-              원본 보기
-            </Text>
-          </Pressable>
-        )}
-      </ScrollView>
+</ScrollView>
     );
   }
 
@@ -4601,6 +4490,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <BrandGradient variant="page" radius={0} />
       <StatusBar barStyle="dark-content" />
 
       <View style={styles.content}>
@@ -4621,6 +4511,150 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  // SAVEON_SAVE_UX_V1: Save-only visual affordances.
+  saveUxUrlInputWrap: {
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  saveUxUrlInput: {
+    paddingRight: 46,
+  },
+  saveUxClear: {
+    position: 'absolute',
+    right: 8,
+    top: 5,
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveUxFeedback: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 2,
+    marginTop: 8,
+    marginBottom: 3,
+  },
+  saveUxFeedbackText: {
+    flex: 1,
+    color: theme.primary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  saveUxFeedbackError: {
+    color: '#B95A43',
+  },
+  saveUxButtonDisabled: {
+    opacity: 0.52,
+  },
+  saveUxProgress: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 4,
+  },
+  saveUxProgressText: {
+    flex: 1,
+    color: theme.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  // SAVEON_DETAIL_UX_V2 – local, theme-compatible detail affordances.
+  detailOpenSourceButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    minHeight: 38,
+    marginTop: 5,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#DCE6FA',
+    backgroundColor: '#EFF4FF',
+  },
+  detailOpenSourceLabel: {
+    color: theme.primary,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  detailEntityExpandButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    minHeight: 32,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#DCE6FA',
+    backgroundColor: '#EFF4FF',
+  },
+  detailEntityExpandLabel: {
+    color: theme.primary,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  // Save:on home UX v1: scoped overrides; preserve existing theme & gradients.
+  homeTitle: {
+    fontSize: 27,
+    lineHeight: 35,
+    marginBottom: 6,
+  },
+  homeHero: {
+    marginTop: 12,
+    marginBottom: 18,
+    padding: 18,
+  },
+  homeHeroNumber: {
+    fontSize: 43,
+    lineHeight: 52,
+  },
+  homeHeroSubtitle: {
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 14,
+  },
+  homeQuickActions: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 10,
+  },
+  homePrimaryAction: {
+    flex: 1,
+    marginTop: 0,
+    minWidth: 0,
+  },
+  homeSearchAction: {
+    minHeight: 48,
+    minWidth: 86,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.24)',
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  homeSearchActionText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  instagramThumbnailPermission: {
+    flexDirection: 'row', alignItems: 'center', gap: 9,
+    paddingHorizontal: 2, paddingVertical: 10, marginTop: 7, marginBottom: 2,
+  },
+  instagramThumbnailPermissionText: {
+    flex: 1, color: '#515A69', fontSize: 13, lineHeight: 20,
+  },
   safe: {
     flex: 1,
     backgroundColor: theme.bg,
@@ -4670,11 +4704,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   hero: {
-    marginTop: 20,
-    marginBottom: 28,
-    padding: 22,
+    marginTop: 12,
+    marginBottom: 18,
+    padding: 18,
     backgroundColor: theme.text,
     borderRadius: 24,
+    overflow: 'hidden',
   },
   heroLabel: {
     color: '#C7CBD3',
@@ -4682,16 +4717,16 @@ const styles = StyleSheet.create({
   },
   heroNumber: {
     color: '#fff',
-    fontSize: 48,
+    fontSize: 40,
     fontWeight: '900',
     marginTop: 2,
   },
   heroSub: {
     color: '#C7CBD3',
-    marginBottom: 18,
+    marginBottom: 12,
   },
   primaryButton: {
-    minHeight: 48,
+    minHeight: 44,
     borderRadius: 14,
     backgroundColor: theme.primary,
     flexDirection: 'row',
@@ -4700,6 +4735,7 @@ const styles = StyleSheet.create({
     gap: 7,
     paddingHorizontal: 16,
     marginTop: 12,
+    overflow: 'hidden',
   },
   primaryButtonText: {
     color: '#fff',
@@ -4908,7 +4944,7 @@ const styles = StyleSheet.create({
   detailHero: {
     backgroundColor: theme.card,
     borderRadius: 22,
-    padding: 20,
+    padding: 18,
     borderWidth: 1,
     borderColor: theme.line,
   },
@@ -4922,10 +4958,10 @@ const styles = StyleSheet.create({
   },
   detailTitle: {
     color: theme.text,
-    fontSize: 25,
+    fontSize: 22,
     lineHeight: 31,
     fontWeight: '900',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   wrapRow: {
     flexDirection: 'row',
@@ -5164,9 +5200,9 @@ const styles = StyleSheet.create({
     marginTop: 12,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: theme.surface,
+    backgroundColor: theme.card,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
   },
   checklistHeaderRow: {
     flexDirection: 'row',
@@ -5315,8 +5351,8 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
   },
   qualityHeaderRow: {
     flexDirection: 'row',
@@ -5363,7 +5399,7 @@ const styles = StyleSheet.create({
     minHeight: 40,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -5379,8 +5415,8 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
   },
   correctionEditorTitle: {
     fontSize: 16,
@@ -5398,7 +5434,7 @@ const styles = StyleSheet.create({
   correctionInput: {
     minHeight: 42,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -5425,7 +5461,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     padding: 10,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
     borderRadius: 14,
     backgroundColor: theme.bg,
   },
@@ -5448,7 +5484,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
   },
   entityTypeChipActive: {
     borderColor: theme.primary,
@@ -5471,7 +5507,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 44,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
     borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
@@ -5499,9 +5535,9 @@ const styles = StyleSheet.create({
     marginBottom: 28,
     padding: 18,
     borderRadius: 20,
-    backgroundColor: theme.surface,
+    backgroundColor: theme.card,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
   },
   onboardingTitle: {
     fontSize: 16,
@@ -5614,12 +5650,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   detailMetaCard: {
-    marginBottom: 18,
+    marginBottom: 8,
     padding: 14,
-    borderRadius: 17,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: '#FAFAFD',
+    borderColor: '#DCE6FA',
+    backgroundColor: '#F6F8FF',
   },
   detailMetaHeader: {
     flexDirection: 'row',
@@ -5634,12 +5670,16 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   detailMetaEditButton: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
     backgroundColor: '#FFFFFF',
+    minHeight: 32,
+    minWidth: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   detailMetaEditText: {
     color: theme.primary,
@@ -5655,7 +5695,7 @@ const styles = StyleSheet.create({
   detailMetaLabel: {
     marginBottom: 7,
     color: theme.muted,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '800',
   },
   detailMetaValues: {
@@ -5673,7 +5713,7 @@ const styles = StyleSheet.create({
   },
   detailMetaChipText: {
     color: theme.primary,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '800',
   },
   detailEntityChip: {
@@ -5689,7 +5729,7 @@ const styles = StyleSheet.create({
   },
   detailEntityChipText: {
     color: theme.text,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '800',
   },
   detailMetaEdited: {
@@ -5843,8 +5883,8 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
     flexDirection: 'row',
     gap: 12,
     alignItems: 'center',
@@ -5865,11 +5905,11 @@ const styles = StyleSheet.create({
   },
   userSection: {
     marginBottom: 16,
-    padding: 16,
+    padding: 18,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: '#DCE6FA',
+    backgroundColor: theme.card,
   },
   userSectionHeader: {
     flexDirection: 'row',
@@ -5885,15 +5925,19 @@ const styles = StyleSheet.create({
   },
   userSectionTitle: {
     color: theme.text,
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: '900',
   },
   inlineEditButton: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
+    minHeight: 32,
+    minWidth: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   inlineEditText: {
     color: theme.primary,
@@ -5986,7 +6030,7 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
     backgroundColor: theme.bg,
   },
   categoryChoiceSelected: {
@@ -6139,8 +6183,8 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 10,
@@ -6171,9 +6215,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: theme.surface,
+    backgroundColor: theme.card,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
   },
   questionExampleText: {
     color: theme.muted,
@@ -6187,7 +6231,7 @@ const styles = StyleSheet.create({
     gap: 9,
     padding: 13,
     borderRadius: 14,
-    backgroundColor: theme.surface,
+    backgroundColor: theme.card,
   },
   knowledgeLoadingText: {
     flex: 1,
@@ -6210,8 +6254,8 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
   },
   knowledgeAnswerHeader: {
     flexDirection: 'row',
@@ -6285,8 +6329,8 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
   },
   smartCollectionTop: {
     flexDirection: 'row',
@@ -6332,13 +6376,13 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   smartCollectionDetail: {
-    marginTop: 14,
-    marginBottom: 18,
+    marginTop: 8,
+    marginBottom: 14,
     padding: 16,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
   },
   smartCollectionDetailHeader: {
     flexDirection: 'row',
@@ -6377,7 +6421,7 @@ const styles = StyleSheet.create({
   smartCollectionDetailMeta: {
     marginTop: 12,
     color: theme.muted,
-    fontSize: 10,
+    fontSize: 12,
   },
 
   collectionCompareButton: {
@@ -6389,6 +6433,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    overflow: 'hidden',
   },
   collectionCompareButtonText: {
     color: '#FFFFFF',
@@ -6398,8 +6443,8 @@ const styles = StyleSheet.create({
   collectionCompareHint: {
     marginTop: 8,
     color: theme.muted,
-    fontSize: 10,
-    lineHeight: 15,
+    fontSize: 12,
+    lineHeight: 18,
   },
   collectionCompareError: {
     marginTop: 10,
@@ -6427,57 +6472,57 @@ const styles = StyleSheet.create({
   collectionComparisonSummary: {
     marginTop: 5,
     color: theme.muted,
-    fontSize: 11,
-    lineHeight: 17,
+    fontSize: 13,
+    lineHeight: 20,
   },
   collectionComparisonSection: {
     gap: 10,
   },
   collectionComparisonSectionTitle: {
     color: theme.text,
-    fontSize: 12,
+    fontSize: 15,
     fontWeight: '900',
   },
   collectionComparisonSectionHint: {
     marginTop: -6,
     color: theme.muted,
-    fontSize: 10,
-    lineHeight: 15,
+    fontSize: 13,
+    lineHeight: 20,
   },
   collectionComparisonDimension: {
     padding: 12,
     borderRadius: 15,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.line,
     backgroundColor: '#FAFAFC',
     gap: 8,
   },
   collectionComparisonDimensionTitle: {
     color: theme.primary,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: '900',
   },
   collectionComparisonItem: {
     paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.border,
+    borderTopColor: theme.line,
   },
   collectionComparisonItemTitle: {
     color: theme.text,
-    fontSize: 10,
+    fontSize: 13,
     fontWeight: '800',
   },
   collectionComparisonItemValue: {
     marginTop: 4,
     color: theme.text,
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 14,
+    lineHeight: 21,
   },
   collectionComparisonEvidence: {
     marginTop: 4,
-    color: theme.muted,
-    fontSize: 9,
-    lineHeight: 14,
+    color: '#515A69',
+    fontSize: 13,
+    lineHeight: 19,
   },
   collectionExternalSection: {
     padding: 13,
@@ -6499,8 +6544,8 @@ const styles = StyleSheet.create({
   collectionExternalHint: {
     marginTop: 6,
     color: '#887449',
-    fontSize: 10,
-    lineHeight: 15,
+    fontSize: 13,
+    lineHeight: 20,
   },
   collectionExternalFact: {
     marginTop: 12,
@@ -6517,7 +6562,7 @@ const styles = StyleSheet.create({
   collectionExternalFactLabel: {
     flex: 1,
     color: theme.text,
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '900',
   },
   collectionExternalStatus: {
@@ -6534,15 +6579,15 @@ const styles = StyleSheet.create({
   collectionExternalValue: {
     marginTop: 7,
     color: theme.text,
-    fontSize: 11,
-    lineHeight: 17,
+    fontSize: 13,
+    lineHeight: 20,
     fontWeight: '800',
   },
   collectionExternalExplanation: {
     marginTop: 5,
     color: theme.muted,
-    fontSize: 10,
-    lineHeight: 15,
+    fontSize: 13,
+    lineHeight: 20,
   },
   collectionExternalSources: {
     marginTop: 8,
@@ -6556,7 +6601,7 @@ const styles = StyleSheet.create({
   collectionExternalSourceText: {
     flex: 1,
     color: theme.primary,
-    fontSize: 9,
+    fontSize: 12,
     fontWeight: '700',
   },
 
@@ -6574,7 +6619,7 @@ const styles = StyleSheet.create({
   collectionComparisonEntity: {
     marginTop: 3,
     color: theme.primary,
-    fontSize: 9,
+    fontSize: 12,
     fontWeight: '800',
   },
   collectionComparisonSectionHeader: {
@@ -6585,8 +6630,8 @@ const styles = StyleSheet.create({
   collectionComparisonFindingStatement: {
     marginTop: 5,
     color: theme.text,
-    fontSize: 11,
-    lineHeight: 17,
+    fontSize: 14,
+    lineHeight: 21,
     fontWeight: '700',
   },
   collectionComparisonEvidenceCard: {
@@ -6595,12 +6640,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.border,
+    borderColor: theme.line,
   },
   collectionComparisonTimestamp: {
     marginTop: 4,
     color: theme.primary,
-    fontSize: 9,
+    fontSize: 12,
     fontWeight: '800',
   },
   collectionExternalSavedLabel: {
@@ -6624,11 +6669,19 @@ const styles = StyleSheet.create({
   },
   collectionComparisonDecisionText: {
     flex: 1,
-    color: theme.muted,
-    fontSize: 9,
-    lineHeight: 14,
+    color: '#515A69',
+    fontSize: 12,
+    lineHeight: 18,
   },
 
+  homeInterestToggle: {
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 7,
+  },
   interestTimelineSection: {
     marginTop: 24,
     marginBottom: 24,
@@ -6638,8 +6691,8 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
     gap: 14,
   },
   interestTimelineSummaryRow: {
@@ -6770,8 +6823,8 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -6932,7 +6985,7 @@ const styles = StyleSheet.create({
   conflictEvidenceCard: {
     padding: 10,
     borderRadius: 13,
-    backgroundColor: theme.surface,
+    backgroundColor: theme.card,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
@@ -7009,8 +7062,8 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -7050,8 +7103,8 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
   },
   moreConnections: {
     marginTop: 12,
@@ -7061,8 +7114,8 @@ const styles = StyleSheet.create({
     padding: 13,
     borderRadius: 15,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
+    borderColor: theme.line,
+    backgroundColor: theme.card,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -7090,3 +7143,16 @@ const styles = StyleSheet.create({
   },
 
 });
+
+// save:on TRUE_PROGRESS_V1
+// SAVEON_INSTAGRAM_THUMBNAIL_V1
+
+// SAVEON_BRAND_PALETTE_V1
+
+// SAVEON_HOME_UX_V1
+
+// SAVEON_DETAIL_UX_V1
+
+// SAVEON_DETAIL_UX_V2
+
+// SAVEON_SAVE_UX_V1

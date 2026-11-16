@@ -11,12 +11,14 @@ public class ContentAnalysisWorker {
 
     private final ContentRepository contentRepository;
     private final AiClient aiClient;
+    private final InstagramThumbnailStorage thumbnailStorage;
     private final CanonicalEntityService canonicalEntityService;
 
     public ContentAnalysisWorker(
             ContentRepository contentRepository,
             AiClient aiClient,
-            CanonicalEntityService canonicalEntityService
+            CanonicalEntityService canonicalEntityService,
+            InstagramThumbnailStorage thumbnailStorage
     ) {
         this.contentRepository =
                 contentRepository;
@@ -26,6 +28,7 @@ public class ContentAnalysisWorker {
 
         this.canonicalEntityService =
                 canonicalEntityService;
+        this.thumbnailStorage = thumbnailStorage;
     }
 
 
@@ -52,7 +55,9 @@ public class ContentAnalysisWorker {
 
             AiAnalyzeResponse result =
                     aiClient.analyze(
-                            content.getSourceUrl()
+                            content.getSourceUrl(),
+                            contentId,
+                            content.isThumbnailAllowed()
                     );
 
             if (result == null) {
@@ -113,6 +118,23 @@ public class ContentAnalysisWorker {
                 );
             }
 
+            // Optional preview is attempted BEFORE final DB save, so the mobile
+            // client sees COMPLETED and thumbnailAvailable in the same response.
+            if (latest.isThumbnailAllowed()
+                    && result.thumbnailBase64() != null
+                    && !result.thumbnailBase64().isBlank()) {
+                try {
+                    String key = thumbnailStorage.store(
+                            contentId, result.thumbnailBase64()
+                    );
+                    latest.setThumbnailObjectKey(key);
+                    System.out.println("[THUMBNAIL] Stored for contentId=" + contentId);
+                } catch (Exception thumbnailError) {
+                    System.err.println("[THUMBNAIL] Optional image failed: "
+                            + thumbnailError.getClass().getSimpleName());
+                }
+            }
+
             contentRepository.save(
                     latest
             );
@@ -143,3 +165,6 @@ public class ContentAnalysisWorker {
         }
     }
 }
+
+// save:on TRUE_PROGRESS_V1
+// SAVEON_INSTAGRAM_THUMBNAIL_V1

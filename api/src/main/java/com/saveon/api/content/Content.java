@@ -59,6 +59,13 @@ public class Content {
     private float[] embedding;
 
 
+    // Explicit per-Reel opt-in: never silently cache other creators' frames.
+    @Column(name = "thumbnail_allowed")
+    private Boolean thumbnailAllowed = Boolean.FALSE;
+
+    @Column(name = "thumbnail_object_key", length = 250)
+    private String thumbnailObjectKey;
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(
             name = "content_categories",
@@ -227,6 +234,26 @@ public class Content {
     }
 
 
+    public void setThumbnailAllowed(boolean permitted) {
+        this.thumbnailAllowed = permitted;
+    }
+
+    public boolean isThumbnailAllowed() {
+        return Boolean.TRUE.equals(thumbnailAllowed);
+    }
+
+    public void setThumbnailObjectKey(String key) {
+        this.thumbnailObjectKey = key;
+    }
+
+    public String storedThumbnailKey() {
+        return thumbnailObjectKey;
+    }
+
+    public boolean isThumbnailAvailable() {
+        return thumbnailObjectKey != null && !thumbnailObjectKey.isBlank();
+    }
+
     public Long getId() {
         return id;
     }
@@ -283,3 +310,4 @@ public class Content {
         return entities;
     }
 }
+// SAVEON_INSTAGRAM_THUMBNAIL_V1

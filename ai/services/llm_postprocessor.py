@@ -573,6 +573,7 @@ def postprocess_with_llm(
     source_title: str = "",
     source_description: str = "",
     source_channel: str = "",
+    review_excerpts: list[str] | None = None,
 ) -> dict:
     if not GEMINI_API_KEY:
         raise RuntimeError(
@@ -608,6 +609,7 @@ def postprocess_with_llm(
             "channel": clean_source_channel,
         },
         "transcript": clean_transcript,
+        "review_excerpts": (review_excerpts or [])[:9],
         "ocr": clean_ocr,
         "vision_labels": clean_vision,
     }
@@ -686,7 +688,29 @@ IMPORTANT RULES:
 
 16. Confidence values must be numbers from 0 to 1.
 
-17. Return JSON only.
+17. A review title saying "8-hour test" or "darkening test" does NOT
+    establish whether wear was good or darkening occurred. Explicitly distinguish
+    tests/mentions from observed outcomes.
+
+18. When a spoken statement or reliable description provides a concrete review
+    outcome, include that specific outcome and its uncertainty in the summary.
+    Prefer DIRECT_STATEMENT excerpts when available. Do not infer an outcome from
+    product claims, generic tags or low-quality OCR.
+
+19. Any prices, shade counts or performance statements must be stated only as
+    the video's claim (not an official/verified fact) unless independently verified.
+    "All shades reviewed" never implies a specific number of shades.
+
+20. Return JSON only.
+
+
+5a. LANGUAGE STYLE (SAVEON_COPY_TONE_V1): Use natural, concise Korean like a personal saved-note.
+    Avoid promotional narrator templates such as "소개합니다", "공유합니다",
+    "본 영상에서는", and "관련 내용을 다룹니다". Prefer a concrete,
+    descriptive sentence about what is actually shown or said, in 1-2 sentences.
+    Never add unobserved claims, confidence, prices, or outcomes for style.
+    Preserve factual uncertainty, conditions, measurements, and evidence.
+
 
 INPUT DATA:
 
@@ -700,7 +724,7 @@ INPUT DATA:
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.15,
-            max_output_tokens=700,
+            max_output_tokens=1050,
             response_mime_type="application/json",
             response_schema={
                 "type": "object",

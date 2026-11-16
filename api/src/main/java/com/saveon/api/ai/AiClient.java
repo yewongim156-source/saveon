@@ -25,15 +25,23 @@ public class AiClient {
         this.jsonMapper = JsonMapper.builder().build();
     }
 
-    public AiAnalyzeResponse analyze(
-            String sourceUrl
-    ) {
+    // save:on TRUE_PROGRESS_V1: preserve old callers.
+    public AiAnalyzeResponse analyze(String sourceUrl) {
+        return analyze(sourceUrl, null);
+    }
+
+    public AiAnalyzeResponse analyze(String sourceUrl, Long contentId) {
+        return analyze(sourceUrl, contentId, false);
+    }
+
+    public AiAnalyzeResponse analyze(String sourceUrl, Long contentId,
+            boolean thumbnailRequested) {
         HttpURLConnection connection = null;
 
         try {
             byte[] requestBody =
                     jsonMapper.writeValueAsBytes(
-                            new AiAnalyzeRequest(sourceUrl)
+                            java.util.Map.of("sourceUrl", sourceUrl, "thumbnailRequested", thumbnailRequested)
                     );
 
             connection =
@@ -52,6 +60,12 @@ public class AiClient {
                     "Content-Type",
                     "application/json; charset=UTF-8"
             );
+            if (contentId != null) {
+                connection.setRequestProperty(
+                        "X-Saveon-Content-Id",
+                        contentId.toString()
+                );
+            }
             connection.setFixedLengthStreamingMode(
                     requestBody.length
             );
@@ -337,3 +351,6 @@ public class AiClient {
         }
     }
 }
+
+// save:on TRUE_PROGRESS_V1
+// SAVEON_INSTAGRAM_THUMBNAIL_V1

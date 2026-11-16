@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
+from services.comparison_grounding import ground_comparison_results
 
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
@@ -239,6 +240,7 @@ Answer the user's question using ONLY SAVED CONTENT.
                 "Treat unverifiedNotes as uncertain and do not present them as established facts. "
                 "If sources conflict, say that the saved contents disagree rather than choosing one. "
                 "Write concise, natural Korean. "
+                "SAVEON_QNA_TONE_V1. Do not open answers with filler such as 저장한 콘텐츠를 기반으로 분석한 결과 or 소개해 드리겠습니다. Lead with the answer if supported, then give grounded details naturally in Korean. "
                 "citedContentIds must contain only content IDs that directly support the answer. "
                 "Do not cite a content item merely because it is topically related."
             ),
@@ -313,7 +315,7 @@ def name_collection(request: CollectionNameRequest):
         )
         return CollectionNameResponse(
             title=fallback_title[:40],
-            description="비슷한 주제의 저장물을 자동으로 모았어요.",
+            description="같은 주제의 영상을 모아뒀어요.",
         )
 
     input_data = {
@@ -348,6 +350,7 @@ DATA:
                 "Do not use technical terms such as entity, embedding, semantic, cluster, AI. "
                 "Do not add unsupported places, products, brands, dates, or recommendations. "
                 "The description must be one concise Korean sentence explaining what the saved items have in common."
+                "SAVEON_COLLECTION_NAME_TONE_V1. Write the description like a simple natural Korean folder note, not a marketing blurb. Avoid repetitive fillers such as 소개합니다, 공유합니다, and 자동으로 모았어요. Prefer specific shared topics supported by the supplied items. "
             ),
             temperature=0.2,
             max_output_tokens=220,
@@ -379,7 +382,7 @@ DATA:
         title = seed or "자동 컬렉션"
 
     if not description:
-        description = "비슷한 주제의 저장물을 자동으로 모았어요."
+        description = "같은 주제의 영상을 모아뒀어요."
 
     return CollectionNameResponse(
         title=title[:50],
@@ -612,6 +615,7 @@ def _compact_compare_context(
         "tags": (structured.get("tags") or [])[:12],
         "entityDetails": (structured.get("entityDetails") or [])[:12],
         "claims": (structured.get("claims") or [])[:6],
+        "videoObservations": (structured.get("videoObservations") or [])[:12],
         "verifiedFacts": (structured.get("verifiedFacts") or [])[:6],
         "verificationStatus": structured.get("verificationStatus"),
         "corrections": (structured.get("corrections") or [])[:6],
@@ -740,6 +744,72 @@ def _clean_objective_disagreements(
     return result[:3]
 
 
+# SAVEON_COMPARE_GROUNDING_V5
+
+def _audit_comparison_evidence(checks: list[dict]) -> dict[str, bool]:
+    """Independently check whether each cited quote entails the exact assertion.
+
+    Any failure returns no approvals: unverified conclusions are not shown.
+    """
+    if not checks:
+        return {}
+
+    prompt = (
+        "For each check, decide whether the QUOTE alone DIRECTLY entails the "
+        "entire STATEMENT. Reject topic-only overlap, wording that exaggerates "
+        "a feature into a positive evaluation, missing numbers, approximate "
+        "values inferred as precise, and claims about current official prices "
+        "from raw OCR. The quote is from a saved video, not external truth. "
+        "Do not assume any information not in the quote. "
+        "Examples: 'all colors reviewed' does NOT prove '5 colors released'; "
+        "'brush application tip' does NOT prove 'excellent pore coverage'. "
+        "Return one boolean per supplied key. Checks: "
+        + json.dumps(checks, ensure_ascii=False)
+    )
+    try:
+        response = genai.Client(api_key=GEMINI_API_KEY).models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=2400,
+                response_mime_type="application/json",
+                response_schema={
+                    "type": "object",
+                    "properties": {
+                        "checks": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "key": {"type": "string"},
+                                    "supported": {"type": "boolean"},
+                                },
+                                "required": ["key", "supported"],
+                            },
+                        }
+                    },
+                    "required": ["checks"],
+                },
+            ),
+        )
+        if not response.text:
+            return {}
+        data = json.loads(response.text)
+        valid_keys = {x["key"] for x in checks}
+        return {
+            str(item["key"]): item["supported"]
+            for item in data.get("checks", [])
+            if isinstance(item, dict)
+            and item.get("key") in valid_keys
+            and type(item.get("supported")) is bool
+        }
+    except Exception as exc:
+        # Do not leak full saved-video context to logs.
+        print(f"[SAVEON] comparison evidence audit unavailable: {type(exc).__name__}")
+        return {}
+
+
 def _build_saved_comparison(
     request: CollectionCompareRequest,
 ) -> tuple[dict, list[ObjectiveDisagreementOutput]]:
@@ -806,8 +876,27 @@ Do not create an objective disagreement when:
 - the difference is subjective
 - the information is missing
 
-Every finding must cite the saved video(s) using contentId and a brief
-quote/paraphrase grounded in the supplied saved content.
+Prioritize videoObservations for concrete review outcomes when available.
+Each videoObservation has a topic, source and verbatim quote. DIRECT_STATEMENT
+means the creator said something specific, not that the statement is verified.
+TOPIC_MENTION is NOT evidence of a positive/negative outcome, and OCR_UNVERIFIED
+is never sufficient on its own to establish a product verdict, price or shade count.
+Never infer a test's result from the test's title. Separate measured outcomes,
+creator opinions, review topics and unverified on-screen text.
+
+Every finding must cite the saved video(s) using contentId and a quote
+copied VERBATIM as a continuous substring of that saved video's title,
+summary, keywords, entities, tags, claims, or verifiedFacts.
+Never invent or paraphrase evidence quotes.
+A claim is common ONLY if at least two different saved videos each
+directly support that full same claim, not merely the broad topic.
+A statement such as 'excellent pore coverage' needs explicit praise
+in every cited quote; an application tip is not evidence of excellence.
+For numeric claims, every cited quote must explicitly give that
+number or the same Korean count word, not 'all colors'.
+UniqueMentions should emphasize concrete, video-specific facts and
+tips, with precisely one directly supporting video each.
+Do not turn unverified OCR text into an established official price.
 
 timestampSeconds must be null unless an actual timestamp is present in
 the supplied data. Never invent timestamps.
@@ -827,6 +916,7 @@ the supplied data. Never invent timestamps.
                 "Preserve disagreement instead of deciding which creator is correct. "
                 "Do not recommend what the user should buy, visit, or choose. "
                 "Provide decision material only. "
+                "SAVEON_COMPARE_TONE_V1. Write the user-facing Korean findings plainly and briefly, without AI-style narration. Never trade away a necessary evidence caveat for brevity or imply agreement from a shared topic. "
                 "Prefer verifiedFacts and user corrections over raw claims when present. "
                 "If evidence is insufficient, omit the finding. "
                 "Never invent a timestamp."
@@ -856,7 +946,7 @@ the supplied data. Never invent timestamps.
                                             "title": {"type": "string"},
                                             "quote": {"type": "string"},
                                             "timestampSeconds": {
-                                                "type": ["number", "null"]
+                                                "type": "NUMBER", "nullable": True
                                             },
                                         },
                                         "required": [
@@ -888,7 +978,7 @@ the supplied data. Never invent timestamps.
                                             "title": {"type": "string"},
                                             "quote": {"type": "string"},
                                             "timestampSeconds": {
-                                                "type": ["number", "null"]
+                                                "type": "NUMBER", "nullable": True
                                             },
                                         },
                                         "required": [
@@ -920,7 +1010,7 @@ the supplied data. Never invent timestamps.
                                             "title": {"type": "string"},
                                             "quote": {"type": "string"},
                                             "timestampSeconds": {
-                                                "type": ["number", "null"]
+                                                "type": "NUMBER", "nullable": True
                                             },
                                         },
                                         "required": [
@@ -960,7 +1050,7 @@ the supplied data. Never invent timestamps.
                                             "title": {"type": "string"},
                                             "quote": {"type": "string"},
                                             "timestampSeconds": {
-                                                "type": ["number", "null"]
+                                                "type": "NUMBER", "nullable": True
                                             },
                                         },
                                         "required": [
@@ -1003,6 +1093,11 @@ the supplied data. Never invent timestamps.
         raise RuntimeError("컬렉션 비교 응답이 비어 있습니다.")
 
     parsed = json.loads(response.text)
+    parsed = ground_comparison_results(
+        parsed, contexts, semantic_audit=_audit_comparison_evidence,
+        fallback_when_empty=True,
+        comparison_entity=request.comparisonEntity,
+    )  # SAVEON_COMPARE_GROUNDING_V6
 
     common_points = _clean_findings(
         parsed.get("commonPoints"),
@@ -1042,9 +1137,12 @@ the supplied data. Never invent timestamps.
         "title": " ".join(
             str(parsed.get("title", "")).split()
         ).strip()[:120] or f"{request.comparisonEntity} 저장물 비교",
-        "summary": " ".join(
-            str(parsed.get("summary", "")).split()
-        ).strip()[:700],
+        "summary": (
+            f"저장 영상 {len(contexts)}개를 비교해 근거가 확인된 공통점 "
+            f"{len(common_points)}개, 엇갈리는 점 {len(disagreements)}개, "
+            f"영상별 정보 {len(unique_mentions)}개를 정리했어요. "
+            "근거가 부족한 주장은 제외했어요."
+        ),
         "commonPoints": common_points,
         "disagreements": disagreements,
         "uniqueMentions": unique_mentions,

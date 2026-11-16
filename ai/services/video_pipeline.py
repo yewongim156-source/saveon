@@ -10,11 +10,15 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from services.reel_thumbnail import frame_thumbnail_base64
 from services.llm_postprocessor import (
     GEMINI_MODEL,
     postprocess_with_llm,
 )
+from services.video_observations import extract_video_observations, review_excerpt_lines
+from services.category_quality_guard import refine_analysis_categories
 from services.fact_verifier import verify_structured_claims
+# SAVEON_QUALITY_GUARD_V9
 from services.verified_summary import apply_verified_summary
 from services.telemetry import pipeline_step
 
@@ -461,6 +465,7 @@ def analyze_video_file(
     source_title: str = "",
     source_description: str = "",
     source_channel: str = "",
+    thumbnail_requested: bool = False,
 ) -> dict:
     print(f"[VIDEO] 분석 시작: {video_path.name}")
 
@@ -488,6 +493,15 @@ def analyze_video_file(
         frames = sample_frames(video_path)
         step.set_output({"frameCount": len(frames)})
 
+    # Frames are already needed by OCR/CLIP; never download media a second time.
+    # Only an explicitly authorized Reel enables the optional private preview.
+    thumbnail_base64 = None
+    if thumbnail_requested:
+        try:
+            thumbnail_base64 = frame_thumbnail_base64(frames)
+        except Exception as exc:
+            print(f"[THUMBNAIL] Optional preview skipped: {type(exc).__name__}")
+
     with pipeline_step(
         "screen-text-ocr",
         kind="TOOL",
@@ -508,6 +522,14 @@ def analyze_video_file(
     ) as step:
         vision_labels = run_vision(frames)
         step.set_output({"labels": vision_labels})
+
+    # SAVEON_VIDEO_OBSERVATIONS_V8: retain provenance from the *original* inputs.
+    observations = extract_video_observations(
+        transcript=transcript,
+        ocr_lines=ocr_lines,
+        source_title=source_title,
+        source_description=source_description,
+    )
 
     source_text = " ".join(
         [source_title, source_description[:1000]]
@@ -585,6 +607,7 @@ def analyze_video_file(
                 source_title=source_title,
                 source_description=source_description,
                 source_channel=source_channel,
+                review_excerpts=review_excerpt_lines(observations),
             )
             step.set_output({
                 "primaryCategory": (
@@ -625,15 +648,25 @@ def analyze_video_file(
         )
         result = fallback_result
 
+    # Immutable source excerpts; not ground-truth product specifications.
+    if isinstance(result.get("structured"), dict):
+        result["structured"]["videoObservations"] = observations
+
     result["structured"] = verify_structured_claims(
         result.get("structured", {})
     )
     result = apply_verified_summary(result)
+    # Remove redundant broad labels only, after Gemini/fallback/verification.
+    result = refine_analysis_categories(result, source_title=source_title)
+
+    if thumbnail_requested and thumbnail_base64 is not None:
+        result["thumbnailBase64"] = thumbnail_base64
 
     print("[VIDEO] 분석 완료")
     print(f"[VIDEO] transcript={transcript[:120]}")
     print(f"[VIDEO] ocr={ocr_lines[:5]}")
     print(f"[VIDEO] vision={vision_labels}")
-    print(f"[VIDEO] result={result}")
+    print(f"[VIDEO] result keys={list(result)} thumbnail={bool(thumbnail_base64)}")
 
     return result
+# SAVEON_INSTAGRAM_THUMBNAIL_V1

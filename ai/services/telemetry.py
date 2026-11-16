@@ -15,6 +15,7 @@ from typing import Any, Iterator
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
+from services.analysis_progress import mark_pipeline_step
 
 
 TELEMETRY_ENABLED = os.getenv(
@@ -250,6 +251,8 @@ def pipeline_step(
         yield StepRecorder(None, None)
         return
 
+    # save:on TRUE_PROGRESS_V1: only real pipeline steps advance the UI.
+    mark_pipeline_step(name)
     step_id = str(uuid4())
     parent_step_id = _STEP_ID.get()
     token = _STEP_ID.set(step_id)
@@ -301,3 +304,5 @@ def pipeline_step(
         ))
     finally:
         _STEP_ID.reset(token)
+
+# save:on TRUE_PROGRESS_V1

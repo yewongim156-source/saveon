@@ -60,6 +60,11 @@ public class ContentService {
                         request.platform()
                 );
 
+        // Explicit consent is honored for Instagram Reels only.
+        content.setThumbnailAllowed(
+                request.platform() == ContentPlatform.INSTAGRAM
+                        && request.thumbnailAllowed()
+        );
         content.startAnalysis();
 
         content =
@@ -263,3 +268,4 @@ public class ContentService {
                 );
     }
 }
+// SAVEON_INSTAGRAM_THUMBNAIL_V1

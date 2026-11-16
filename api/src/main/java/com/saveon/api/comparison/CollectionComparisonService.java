@@ -5,6 +5,7 @@ import com.saveon.api.comparison.dto.CollectionComparisonRequest;
 import com.saveon.api.comparison.dto.CollectionComparisonResponse;
 import com.saveon.api.content.Content;
 import com.saveon.api.content.ContentService;
+import com.saveon.api.content.ContentSourceIdentity;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -60,9 +61,27 @@ public class CollectionComparisonService {
                 .limit(8)
                 .toList();
 
-        List<Content> contents = ids.stream()
-                .map(contentService::findById)
-                .toList();
+        Map<String, Content> uniqueVideos = new LinkedHashMap<>();
+        for (Long id : ids) {
+            Content content = contentService.findById(id);
+            String sourceKey = ContentSourceIdentity.key(
+                    content.getSourceUrl(), content.getId());
+            uniqueVideos.putIfAbsent(sourceKey, content);
+        }
+
+        List<Content> contents = new ArrayList<>(uniqueVideos.values());
+        if (contents.size() < 2) {
+            return new CollectionComparisonResponse(
+                    false,
+                    "같은 영상을 중복 저장한 경우에는 서로 다른 영상으로 비교할 수 없어요.",
+                    "",
+                    request.collectionTitle() == null
+                            ? "저장물 비교" : request.collectionTitle(),
+                    "서로 다른 저장물을 2개 이상 선택해 주세요.",
+                    List.of(), List.of(), List.of(), List.of(),
+                    List.of(), List.of()
+            );
+        }
 
         String comparisonEntity =
                 findRepeatedComparisonEntity(contents);
@@ -219,7 +238,13 @@ public class CollectionComparisonService {
                     String name =
                             normalizeEntityName(rawName);
 
-                    if (name.isBlank()) {
+                    // A top-level entity can come from noisy OCR. Only treat it
+                    // as a comparison target if it has independent support in
+                    // the saved video's title, summary or keywords. Trusted
+                    // structured entityDetails were already counted above.
+                    if (name.isBlank()
+                            || normalizeAnchorToken(name).isBlank()
+                            || !hasTextEvidence(content, name)) {
                         continue;
                     }
 
@@ -261,10 +286,11 @@ public class CollectionComparisonService {
                                         EntityCount::count
                                 )
                                 .reversed()
-                                .thenComparingInt(item ->
-                                        item.name().length()
+                                .thenComparing(
+                                        Comparator.comparingInt(
+                                                (EntityCount item) -> item.name().length()
+                                        ).reversed()
                                 )
-                                .reversed()
                 )
                 .map(EntityCount::name)
                 .findFirst()
@@ -279,6 +305,29 @@ public class CollectionComparisonService {
         // subject anchor from user-visible text instead of declaring the
         // collection non-comparable.
         return findRepeatedTextAnchor(contents);
+    }
+
+    private boolean hasTextEvidence(Content content, String entity) {
+        String normalized = entity.toLowerCase(Locale.ROOT);
+        List<String> evidence = new ArrayList<>();
+
+        if (content.getTitle() != null) {
+            evidence.add(content.getTitle());
+        }
+        if (content.getSummary() != null) {
+            evidence.add(content.getSummary());
+        }
+        if (content.getKeywords() != null) {
+            evidence.addAll(content.getKeywords());
+        }
+
+        for (String value : evidence) {
+            if (value != null
+                    && value.toLowerCase(Locale.ROOT).contains(normalized)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String findRepeatedTextAnchor(
@@ -302,9 +351,6 @@ public class CollectionComparisonService {
             }
             if (content.getKeywords() != null) {
                 sources.addAll(content.getKeywords());
-            }
-            if (content.getEntities() != null) {
-                sources.addAll(content.getEntities());
             }
 
             for (String source : sources) {
@@ -350,12 +396,12 @@ public class CollectionComparisonService {
                                         AnchorCount::count
                                 )
                                 .reversed()
-                                .thenComparingInt(value ->
-                                        anchorSpecificity(
-                                                value.label()
-                                        )
+                                .thenComparing(
+                                        Comparator.comparingInt(
+                                                (AnchorCount value) ->
+                                                        anchorSpecificity(value.label())
+                                        ).reversed()
                                 )
-                                .reversed()
                 )
                 .map(AnchorCount::label)
                 .findFirst()

@@ -36,6 +36,9 @@ export default function BottomNav({
             key={tab.key}
             style={styles.item}
             onPress={() => onChange(tab.key)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            accessibilityLabel={tab.label}
           >
             <Ionicons
               name={tab.icon}
@@ -72,6 +75,8 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   item: {
+    minHeight: 48,
+    justifyContent: 'center',
     flex: 1,
     alignItems: 'center',
     gap: 3,
@@ -85,3 +90,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+
+// SAVEON_HOME_UX_V1

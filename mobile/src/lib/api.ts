@@ -1,6 +1,16 @@
+import type { PipelineStage } from '../design/pipelineStage';
+
+/** save:on TRUE_PROGRESS_V1 - persisted status + live analysis stage. */
+export type ApiContentProgress = {
+  contentId: number;
+  status: ApiContent['status'];
+  stage: PipelineStage;
+};
+
 export type ApiContent = {
   id: number;
   sourceUrl: string;
+  thumbnailAvailable?: boolean;
   platform: 'INSTAGRAM' | 'YOUTUBE' | 'WEB' | 'UPLOAD';
   title: string | null;
   summary: string | null;
@@ -286,11 +296,12 @@ const API_BASE_URL =
 export async function createContent(
   sourceUrl: string,
   platform: ApiContent['platform'],
+  thumbnailAllowed = false,
 ): Promise<ApiContent> {
   const response = await fetch(`${API_BASE_URL}/contents`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sourceUrl, platform }),
+    body: JSON.stringify({ sourceUrl, platform, thumbnailAllowed }),
   });
 
   if (!response.ok) {
@@ -327,6 +338,19 @@ export async function uploadVideo(
   }
 
   return response.json();
+}
+
+export async function getContentProgress(contentId: number): Promise<ApiContentProgress> {
+  const response = await fetch(`${API_BASE_URL}/contents/${contentId}/progress`);
+  if (!response.ok) {
+    throw new Error(`분석 진행 상태 조회 실패: HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+/** Private Spring image endpoint. Never expose a MinIO URL to the mobile app. */
+export function getInstagramThumbnailUrl(id: string | number): string {
+  return `${API_BASE_URL}/contents/${encodeURIComponent(String(id))}/thumbnail`;
 }
 
 export async function getContents(): Promise<ApiContent[]> {
@@ -719,3 +743,6 @@ export async function getInterestTimeline(): Promise<ApiInterestTimeline> {
 }
 
 export { API_BASE_URL };
+
+// save:on TRUE_PROGRESS_V1
+// SAVEON_INSTAGRAM_THUMBNAIL_V1
