@@ -27,6 +27,8 @@ developer-api/__pycache__/
 developer-api/**/*.pyc
 developer-api/.pytest_cache/
 developer-api/*.db
+evaluation/__pycache__/
+evaluation/**/*.pyc
 
 # IDE
 .idea/

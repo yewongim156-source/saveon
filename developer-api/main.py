@@ -6,6 +6,8 @@ import os
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pathlib import Path
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -13,6 +15,7 @@ load_dotenv()
 
 from database import Base, engine, get_db
 from event_ingestion import ingest_event
+from evaluation_api import router as evaluation_router
 from models import PipelineStep, TraceEvent, TraceSession
 from schemas import (
     EventAccepted,
@@ -43,7 +46,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["Content-Type", "X-Developer-Token"],
 )
 
@@ -57,6 +60,14 @@ def verify_internal_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="유효한 Developer API 토큰이 필요합니다.",
         )
+
+
+app.include_router(evaluation_router, dependencies=[Depends(verify_internal_token)])
+
+
+@app.get("/evaluations", include_in_schema=False)
+def evaluation_console():
+    return FileResponse(Path(__file__).parent / "evaluation_console.html")
 
 
 @app.get("/health")

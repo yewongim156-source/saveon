@@ -1,0 +1,15 @@
+{
+  "datasetVersion": "user-pilot-2026-11",
+  "sources": [
+    {"id": "user-001", "category": "화장품 추천", "url": "https://www.youtube.com/shorts/waqvnBsCyHA"},
+    {"id": "user-002", "category": "옷 추천", "url": "https://www.youtube.com/shorts/1gaj1I2mQ8M"},
+    {"id": "user-003", "category": "GPT 플러그인", "url": "https://www.youtube.com/shorts/9_eaZJ0N7Sw"},
+    {"id": "user-004", "category": "홈트레이닝", "url": "https://www.youtube.com/shorts/3zugaG7Sf5c"},
+    {"id": "user-005", "category": "복근 운동", "url": "https://www.youtube.com/shorts/CNkgBWaNxLU"},
+    {"id": "user-006", "category": "레시피", "url": "https://www.youtube.com/shorts/_ab7roktsNI"},
+    {"id": "user-007", "category": "레시피", "url": "https://www.youtube.com/shorts/zVq18DGkAwI"},
+    {"id": "user-008", "category": "카페", "url": "https://www.youtube.com/shorts/AgUDtoqj1Fo"},
+    {"id": "user-009", "category": "데이트 코스", "url": "https://www.youtube.com/shorts/hruDDK2XJ2M"},
+    {"id": "user-010", "category": "등산 코스", "url": "https://www.youtube.com/shorts/l9dkZj_FXNY"}
+  ]
+}

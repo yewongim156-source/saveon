@@ -1,0 +1,57 @@
+{
+  "datasetVersion": "pilot-v1",
+  "selectionDate": "2026-11-10",
+  "selectionPolicy": "Public YouTube videos under 120 seconds, selected to cover modality and failure-mode diversity.",
+  "sources": [
+    {
+      "id": "pilot-001",
+      "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+      "selectionReason": "Speech-dominant clip with a known description/transcript conflict."
+    },
+    {
+      "id": "pilot-002",
+      "url": "https://www.youtube.com/watch?v=J4vEoFVcguw",
+      "selectionReason": "Korean recipe clip combining narration, cooking visuals, and on-screen text."
+    },
+    {
+      "id": "pilot-003",
+      "url": "https://www.youtube.com/watch?v=RQ9kceb4HGI",
+      "selectionReason": "Very short beauty/skincare clip with sparse evidence."
+    },
+    {
+      "id": "pilot-004",
+      "url": "https://www.youtube.com/watch?v=RBeFWkXolZo",
+      "selectionReason": "Korean squat instruction where visual form and spoken guidance both matter."
+    },
+    {
+      "id": "pilot-005",
+      "url": "https://www.youtube.com/watch?v=nQ6xqiJKMzE",
+      "selectionReason": "Korean study advice with multiple tips and named speaker context."
+    },
+    {
+      "id": "pilot-006",
+      "url": "https://www.youtube.com/watch?v=hh-NimA2nCs",
+      "selectionReason": "Phone how-to clip where steps and UI text must be separated from noise."
+    },
+    {
+      "id": "pilot-007",
+      "url": "https://www.youtube.com/watch?v=Tc9ZjqYT5lY",
+      "selectionReason": "Place recommendation requiring reliable place entity extraction."
+    },
+    {
+      "id": "pilot-008",
+      "url": "https://www.youtube.com/watch?v=WOsAQPbn7m4",
+      "selectionReason": "Short financial-information trailer with claims that should not become advice."
+    },
+    {
+      "id": "pilot-009",
+      "url": "https://www.youtube.com/watch?v=bjFKh6wOS7U",
+      "selectionReason": "Health/science claim requiring claim extraction and cautious verification."
+    },
+    {
+      "id": "pilot-010",
+      "url": "https://www.youtube.com/watch?v=iXixqKyWUw8",
+      "selectionReason": "Product review requiring product entity, features, and opinion separation."
+    }
+  ]
+}

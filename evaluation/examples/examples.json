@@ -1,0 +1,67 @@
+{
+  "notice": "가상의 예시이며 실제 영상, 제품, 장소, 검증 결과가 아닙니다.",
+  "examples": [
+    {
+      "id": "product",
+      "gold": {
+        "targets": [
+          {
+            "id": "product-a", "name": "가상 보습 제품 A", "type": "PRODUCT",
+            "requiredFacts": [{"id": "a-f1", "text": "영상에서 가벼운 제형이라고 추천한다.", "evidence": [{"modality": "STT", "startMs": 2000, "endMs": 5000}]}],
+            "optionalFacts": [], "steps": [],
+            "externalExpectations": [{"id": "a-e1", "purpose": "VERIFY_CLAIM", "text": "공식 제품 정보에 가벼운 제형이 명시되어 있는가?", "preferredSourceType": "OFFICIAL", "reviewStatus": "NOT_REVIEWED", "expectedVerdict": "NOT_ASSESSED", "sources": []}]
+          },
+          {
+            "id": "product-b", "name": "가상 보습 제품 B", "type": "PRODUCT",
+            "requiredFacts": [{"id": "b-f1", "text": "영상에서 촉촉한 사용감을 소개한다.", "evidence": [{"modality": "OCR", "timeMs": 9000}]}],
+            "optionalFacts": [], "steps": [], "externalExpectations": []
+          }
+        ], "globalSteps": [], "externalExpectations": []
+      }
+    },
+    {
+      "id": "place",
+      "gold": {
+        "targets": [{
+          "id": "place-a", "name": "가상 카페 A", "type": "PLACE",
+          "requiredFacts": [{"id": "p-f1", "text": "영상에서 조용한 작업 공간으로 소개한다.", "evidence": [{"modality": "STT", "startMs": 3000, "endMs": 6000}]}],
+          "optionalFacts": [], "steps": [],
+          "externalExpectations": [{"id": "p-e1", "purpose": "ENRICH_INFORMATION", "text": "현재 운영시간을 확인한다.", "preferredSourceType": "OFFICIAL", "reviewStatus": "NOT_REVIEWED", "sources": []}]
+        }], "globalSteps": [], "externalExpectations": []
+      }
+    },
+    {
+      "id": "recipe",
+      "gold": {
+        "targets": [{"id": "recipe-a", "name": "가상 채소 요리", "type": "RECIPE", "requiredFacts": [{"id": "r-f1", "text": "채소와 두부를 사용한다.", "evidence": [{"modality": "OCR", "timeMs": 2000}]}], "optionalFacts": [], "steps": [], "externalExpectations": []}],
+        "globalSteps": [
+          {"id": "r-s1", "order": 1, "text": "채소를 썬다.", "required": true, "evidence": [{"modality": "VISION", "timeMs": 5000}]},
+          {"id": "r-s2", "order": 2, "text": "두부와 채소를 익힌다.", "required": true, "evidence": [{"modality": "STT", "startMs": 8000, "endMs": 11000}]},
+          {"id": "r-s3", "order": 3, "text": "원하면 고명을 추가한다.", "required": false, "condition": "기호에 따라", "evidence": [{"modality": "OCR", "timeMs": 14000}]}
+        ], "externalExpectations": []
+      }
+    },
+    {
+      "id": "exercise",
+      "gold": {
+        "targets": [{
+          "id": "exercise-a", "name": "가상 스트레칭", "type": "EXERCISE", "requiredFacts": [], "optionalFacts": [],
+          "steps": [
+            {"id": "x-s1", "order": 1, "text": "편한 자세로 선다.", "required": true, "evidence": [{"modality": "VISION", "timeMs": 2000}]},
+            {"id": "x-s2", "order": 2, "text": "팔을 천천히 올린다.", "required": true, "condition": "불편하지 않은 범위에서", "evidence": [{"modality": "STT", "startMs": 4000, "endMs": 7000}]}
+          ],
+          "externalExpectations": [{"id": "x-e1", "purpose": "VERIFY_CLAIM", "text": "영상에서 제시한 효과에 근거가 있는가?", "preferredSourceType": "RESEARCH", "reviewStatus": "NOT_REVIEWED", "expectedVerdict": "NOT_ASSESSED", "sources": []}]
+        }], "globalSteps": [], "externalExpectations": []
+      }
+    },
+    {
+      "id": "tools",
+      "gold": {
+        "targets": [
+          {"id": "tool-a", "name": "가상 GPT 기능 A", "type": "TOOL", "requiredFacts": [{"id": "a-f1", "text": "영상에서 반복 작업에 활용한다고 설명한다.", "evidence": [{"modality": "STT", "startMs": 1000, "endMs": 3000}]}], "optionalFacts": [], "steps": [{"id": "a-s1", "order": 1, "text": "가상 설정 메뉴를 연다.", "required": true, "evidence": [{"modality": "OCR", "timeMs": 4000}]}, {"id": "a-s2", "order": 2, "text": "원하는 조건을 입력한다.", "required": true, "evidence": [{"modality": "OCR", "timeMs": 6000}]}], "externalExpectations": [{"id": "a-e1", "purpose": "VERIFY_CLAIM", "text": "현재 기능 지원 여부와 설정 방법을 확인한다.", "preferredSourceType": "OFFICIAL", "reviewStatus": "NOT_REVIEWED", "expectedVerdict": "NOT_ASSESSED", "sources": []}]},
+          {"id": "tool-b", "name": "가상 GPT 기능 B", "type": "SKILL", "requiredFacts": [], "optionalFacts": [], "steps": [{"id": "b-s1", "order": 1, "text": "가상 기능을 선택한다.", "required": true, "evidence": [{"modality": "OCR", "timeMs": 12000}]}, {"id": "b-s2", "order": 2, "text": "요청을 입력한다.", "required": true, "evidence": [{"modality": "STT", "startMs": 14000, "endMs": 17000}]}], "externalExpectations": []}
+        ], "globalSteps": [], "externalExpectations": []
+      }
+    }
+  ]
+}

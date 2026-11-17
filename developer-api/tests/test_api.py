@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -39,6 +40,86 @@ class DeveloperApiTests(unittest.TestCase):
         }
         payload.update(overrides)
         return payload
+
+    def test_evaluation_edit_persists_and_detects_stale_revision(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "evaluation").mkdir()
+            (root / "evaluation" / "pilot_v1.json").write_text(json.dumps({"items": [{"id": "pilot-002", "source": {"url": "https://example.com"}, "gold": {"mainTopic": "초안"}, "annotation": {"status": "DRAFT"}}]}), encoding="utf-8")
+            with patch("evaluation_api.ROOT", root):
+                item = self.client.get("/admin/evaluations").json()[0]
+                body = {"revision": item["revision"], "gold": {"mainTopic": "수정"}, "annotation": {"status": "REVIEWED"}}
+                self.assertEqual(self.client.put("/admin/evaluations/pilot-002", json=body).status_code, 200)
+                self.assertEqual(self.client.put("/admin/evaluations/pilot-002", json=body).status_code, 409)
+                self.assertEqual(self.client.get("/admin/evaluations").json()[0]["item"]["gold"]["mainTopic"], "수정")
+                self.assertEqual(self.client.get("/admin/evaluations/pilot-002").json()["runs"], [])
+
+    def test_evaluation_displays_only_evidence_from_selected_run(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "evaluation").mkdir()
+            (root / "evaluation" / "user_sources.json").write_text(json.dumps({"sources": [{"id": "user-001", "url": "https://example.com"}]}), encoding="utf-8")
+            run_dir = root / ".runtime" / "grounding-replay"
+            run_dir.mkdir(parents=True)
+            (run_dir / "user-001.json").write_text(json.dumps({"summary": "요약", "structured": {"videoEvidence": [{"id": "s", "modality": "STT", "text": "음성"}, {"id": "o", "modality": "OCR", "text": "자막"}]}}), encoding="utf-8")
+            with patch("evaluation_api.ROOT", root):
+                self.client.get("/admin/evaluations")
+                run = self.client.get("/admin/evaluations/user-001").json()["runs"][0]
+                self.assertEqual([x["id"] for x in run["stt"]], ["s"])
+                self.assertEqual([x["id"] for x in run["ocr"]], ["o"])
+                self.assertEqual(run["gemini"]["summary"], "요약")
+
+    def test_add_video_and_run_until_completed(self):
+        created = self.client.post("/admin/evaluations", json={"url": "https://www.youtube.com/shorts/waqvnBsCyHA", "title": "제품"})
+        self.assertEqual(created.status_code, 201)
+        item_id = created.json()["item"]["id"]
+        self.assertEqual(created.json()["item"]["annotation"]["status"], "DRAFT")
+        with patch("evaluation_api.httpx.Client") as client:
+            session = client.return_value.__enter__.return_value
+            session.post.return_value.json.return_value = {"id": 42, "status": "ANALYZING"}
+            started = self.client.post(f"/admin/evaluations/{item_id}/runs")
+            self.assertEqual(started.status_code, 202)
+            run_id = started.json()["id"]
+            self.assertEqual(self.client.post(f"/admin/evaluations/{item_id}/runs").status_code, 409)
+            session.get.return_value.json.return_value = {"id": 42, "status": "COMPLETED", "summary": "정리", "structuredAnalysis": {"videoEvidence": [{"modality": "STT", "text": "음성"}]}}
+            finished = self.client.post(f"/admin/evaluations/{item_id}/runs/{run_id}/refresh")
+            self.assertEqual(finished.json()["status"], "COMPLETED")
+            self.assertEqual(finished.json()["stt"][0]["text"], "음성")
+            self.assertEqual(self.client.get(f"/admin/evaluations/{item_id}").json()["runs"][0]["gemini"]["summary"], "정리")
+            self.assertEqual(self.client.post(f"/admin/evaluations/{item_id}/runs").status_code, 202)
+
+    def test_invalid_urls_and_submission_failure(self):
+        self.assertEqual(self.client.post("/admin/evaluations", json={"url": "http://youtube.com.evil.test/a"}).status_code, 422)
+        self.assertEqual(self.client.post("/admin/evaluations", json={"url": "https://instagram.com/reel/abc/"}).status_code, 201)
+        item = self.client.post("/admin/evaluations", json={"url": "https://youtu.be/abc"}).json()["item"]
+        import httpx
+        with patch("evaluation_api.httpx.Client") as client:
+            client.return_value.__enter__.return_value.post.side_effect = httpx.ConnectError("unavailable")
+            result = self.client.post(f"/admin/evaluations/{item['id']}/runs").json()
+            self.assertEqual(result["status"], "SUBMISSION_UNKNOWN")
+            self.assertIn("재실행 전 확인", result["error"])
+
+    def test_review_is_saved_per_run_and_marks_changed_gold_stale(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "evaluation").mkdir()
+            (root / "evaluation" / "user_sources.json").write_text(json.dumps({"sources": [{"id": "user-001", "url": "https://youtu.be/test"}]}), encoding="utf-8")
+            run_dir = root / ".runtime" / "user-pilot-results"
+            run_dir.mkdir(parents=True)
+            (run_dir / "user-001.json").write_text(json.dumps({"content": {"status": "COMPLETED", "summary": "결과"}}), encoding="utf-8")
+            with patch("evaluation_api.ROOT", root):
+                self.client.get("/admin/evaluations")
+                body = {"revision": 0, "goldRevision": 1, "judgments": {"targets/0/name": "MISSING"}, "notes": "제품 누락"}
+                url = "/admin/evaluations/user-001/reviews/baseline"
+                self.assertEqual(self.client.put(url, json=body).status_code, 200)
+                self.assertEqual(self.client.put(url, json=body).status_code, 409)
+                detail = self.client.get("/admin/evaluations/user-001").json()
+                self.assertEqual(detail["reviews"]["baseline"]["data"]["judgments"]["targets/0/name"], "MISSING")
+                self.assertFalse(detail["reviews"]["baseline"]["stale"])
+                self.client.put("/admin/evaluations/user-001", json={"revision": 1, "gold": {"mainTopic": "변경"}, "annotation": {"status": "DRAFT"}})
+                self.assertTrue(self.client.get("/admin/evaluations/user-001").json()["reviews"]["baseline"]["stale"])
+                self.assertEqual(self.client.put(url, json={**body, "revision": 1}).status_code, 409)
+                self.assertEqual(self.client.put("/admin/evaluations/user-001/reviews/unknown", json={**body, "goldRevision": 2}).status_code, 404)
 
     def test_ingests_trace_and_step_events(self):
         response = self.client.post(

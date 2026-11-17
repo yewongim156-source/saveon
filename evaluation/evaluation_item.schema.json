@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://saveon.local/schemas/evaluation-pilot-v1.json",
+  "title": "Save:On short-form evaluation dataset",
+  "type": "object",
+  "required": [
+    "datasetVersion",
+    "createdAt",
+    "taxonomyVersion",
+    "annotationPolicyVersion",
+    "items"
+  ],
+  "properties": {
+    "datasetVersion": {"type": "string", "const": "pilot-v1"},
+    "createdAt": {"type": "string", "format": "date"},
+    "taxonomyVersion": {"type": "string"},
+    "annotationPolicyVersion": {"type": "string"},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/item"}
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "inputProfile", "gold", "annotation"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^pilot-[0-9]{3}$"},
+        "evaluationStatus": {"type": "string", "enum": ["ACTIVE", "EXCLUDED"]},
+        "exclusionReason": {"type": "string"},
+        "source": {"$ref": "#/$defs/source"},
+        "inputProfile": {"$ref": "#/$defs/inputProfile"},
+        "gold": {"$ref": "#/$defs/gold"},
+        "annotation": {"$ref": "#/$defs/annotation"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "url",
+        "videoId",
+        "title",
+        "creator",
+        "durationSeconds",
+        "language",
+        "accessedAt"
+      ],
+      "properties": {
+        "platform": {"type": "string", "const": "YOUTUBE"},
+        "url": {"type": "string", "format": "uri"},
+        "videoId": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1},
+        "creator": {"type": "string", "minLength": 1},
+        "durationSeconds": {"type": "integer", "minimum": 1, "maximum": 120},
+        "language": {"type": "string", "enum": ["ko", "en", "mixed", "none"]},
+        "accessedAt": {"type": "string", "format": "date"}
+      }
+    },
+    "inputProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modalityProfile", "availableModalities", "challenges"],
+      "properties": {
+        "modalityProfile": {
+          "type": "string",
+          "enum": ["STT_DOMINANT", "OCR_DOMINANT", "VISION_DOMINANT", "MIXED"]
+        },
+        "availableModalities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "enum": ["STT", "OCR", "VISION", "METADATA"]}
+        },
+        "challenges": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modality"],
+      "properties": {
+        "modality": {"type": "string", "enum": ["STT", "OCR", "VISION", "METADATA"]},
+        "startMs": {"type": "integer", "minimum": 0},
+        "endMs": {"type": "integer", "minimum": 0},
+        "timeMs": {"type": "integer", "minimum": 0},
+        "note": {"type": "string"}
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text", "evidence"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/evidence"}
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "evidence"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "type": {
+          "type": "string",
+          "enum": ["PLACE", "PRODUCT", "BRAND", "PERSON", "SERVICE", "EVENT", "DATE", "OTHER"]
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/evidence"}
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "type",
+        "verifiable",
+        "expectedVerdict",
+        "evidence",
+        "referenceUrls"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1},
+        "type": {
+          "type": "string",
+          "enum": ["LOCATION", "DATE_TIME", "PRICE", "PRODUCT_PERFORMANCE", "HEALTH_BEAUTY", "TRAVEL_RULE", "STATISTIC", "OTHER"]
+        },
+        "verifiable": {"type": "boolean"},
+        "expectedVerdict": {
+          "type": "string",
+          "enum": ["SUPPORTED", "PARTIALLY_SUPPORTED", "CONFLICTING", "INSUFFICIENT_EVIDENCE", "NOT_ASSESSED"]
+        },
+        "rationale": {"type": "string"},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/evidence"}
+        },
+        "referenceUrls": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "format": "uri"}
+        }
+      }
+    },
+    "irrelevantInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "description", "reason"],
+      "properties": {
+        "source": {"type": "string", "enum": ["TITLE", "DESCRIPTION", "STT", "OCR", "VISION"]},
+        "description": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "externalExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "purpose", "text", "reviewStatus", "sources"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "purpose": {"type": "string", "enum": ["VERIFY_CLAIM", "ENRICH_INFORMATION"]},
+        "text": {"type": "string", "minLength": 1},
+        "preferredSourceType": {"type": "string", "enum": ["OFFICIAL", "RESEARCH", "GOVERNMENT", "OTHER"]},
+        "reviewStatus": {"type": "string", "enum": ["NOT_REVIEWED", "REVIEWED", "NO_RELIABLE_SOURCE"]},
+        "expectedVerdict": {"type": "string", "enum": ["SUPPORTED", "PARTIALLY_SUPPORTED", "CONFLICTING", "INSUFFICIENT_EVIDENCE", "NOT_ASSESSED"]},
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["url", "title", "checkedAt", "supports"],
+            "properties": {
+              "url": {"type": "string", "format": "uri"},
+              "title": {"type": "string", "minLength": 1},
+              "checkedAt": {"type": "string", "format": "date"},
+              "supports": {"type": "string", "minLength": 1},
+              "validAsOf": {"type": "string", "format": "date"}
+            }
+          }
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "order", "text", "required", "evidence"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "order": {"type": "integer", "minimum": 1},
+        "text": {"type": "string", "minLength": 1},
+        "required": {"type": "boolean"},
+        "condition": {"type": "string"},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evidence"}}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "type", "requiredFacts", "optionalFacts", "steps", "externalExpectations"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "type": {"type": "string", "enum": ["PRODUCT", "PLACE", "RECIPE", "EXERCISE", "TOOL", "SKILL", "EVENT", "OTHER"]},
+        "requiredFacts": {"type": "array", "items": {"$ref": "#/$defs/fact"}},
+        "optionalFacts": {"type": "array", "items": {"$ref": "#/$defs/fact"}},
+        "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}},
+        "externalExpectations": {"type": "array", "items": {"$ref": "#/$defs/externalExpectation"}}
+      }
+    },
+    "gold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primaryCategory",
+        "secondaryCategories",
+        "contentType",
+        "mainTopic",
+        "referenceSummary",
+        "requiredFacts",
+        "optionalFacts",
+        "irrelevantInputs",
+        "entities",
+        "claims",
+        "expectedActions"
+      ],
+      "properties": {
+        "primaryCategory": {"$ref": "#/$defs/category"},
+        "secondaryCategories": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/category"}
+        },
+        "contentType": {
+          "type": "string",
+          "enum": ["PLACE_RECOMMENDATION", "HOW_TO", "PRODUCT_REVIEW", "RECIPE", "EVENT_INFO", "EDUCATIONAL", "NEWS_CLAIM", "OTHER"]
+        },
+        "mainTopic": {"type": "string", "minLength": 1},
+        "referenceSummary": {"type": "string", "minLength": 1, "maxLength": 600},
+        "requiredFacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/fact"}
+        },
+        "optionalFacts": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/fact"}
+        },
+        "irrelevantInputs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/irrelevantInput"}
+        },
+        "entities": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/entity"}
+        },
+        "claims": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/claim"}
+        },
+        "targets": {"type": "array", "items": {"$ref": "#/$defs/target"}},
+        "globalSteps": {"type": "array", "items": {"$ref": "#/$defs/step"}},
+        "externalExpectations": {"type": "array", "items": {"$ref": "#/$defs/externalExpectation"}},
+        "expectedActions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["MAP", "CALENDAR", "REMINDER", "CHECKLIST", "WEB_SEARCH", "PRODUCT_COMPARE", "NONE"]
+          }
+        }
+      }
+    },
+    "category": {
+      "type": "string",
+      "enum": ["장소/여행", "음식/레시피", "제품/쇼핑", "뷰티/패션", "학습/커리어", "건강/운동", "생활정보", "엔터테인먼트", "기타"]
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "annotators", "reviewedAt", "notes"],
+      "properties": {
+        "status": {"type": "string", "enum": ["DRAFT", "SINGLE_REVIEWED", "ADJUDICATED"]},
+        "annotators": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "reviewedAt": {"type": "string", "format": "date"},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

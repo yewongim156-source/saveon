@@ -1,0 +1,801 @@
+{
+  "datasetVersion": "pilot-v1",
+  "createdAt": "2026-11-10",
+  "taxonomyVersion": "saveon-top-level-v1",
+  "annotationPolicyVersion": "v1",
+  "items": [
+    {
+      "id": "pilot-001",
+      "evaluationStatus": "EXCLUDED",
+      "exclusionReason": "사용자 요청: 평가 대상 제외",
+      "source": {
+        "platform": "YOUTUBE",
+        "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+        "videoId": "jNQXAC9IVRw",
+        "title": "Me at the zoo",
+        "creator": "jawed",
+        "durationSeconds": 19,
+        "language": "en",
+        "accessedAt": "2026-11-10"
+      },
+      "inputProfile": {
+        "modalityProfile": "STT_DOMINANT",
+        "availableModalities": ["STT", "VISION", "METADATA"],
+        "challenges": ["DESCRIPTION_CONFLICT", "STT_NOUN_ERROR", "VERY_SHORT"]
+      },
+      "gold": {
+        "primaryCategory": "엔터테인먼트",
+        "secondaryCategories": ["기타"],
+        "contentType": "OTHER",
+        "mainTopic": "동물원 코끼리 앞에서 촬영한 짧은 소개",
+        "referenceSummary": "동물원 코끼리 앞에서 코끼리의 긴 코를 짧게 언급하는 영상이다.",
+        "requiredFacts": [
+          {
+            "id": "f1",
+            "text": "촬영자는 동물원에서 코끼리 앞에 있다.",
+            "evidence": [{"modality": "STT", "startMs": 180, "endMs": 4180}]
+          },
+          {
+            "id": "f2",
+            "text": "코끼리의 코가 매우 길다고 말한다.",
+            "evidence": [{"modality": "STT", "startMs": 4180, "endMs": 14180, "note": "Whisper가 trunks를 punks로 오인식했다."}]
+          }
+        ],
+        "optionalFacts": [],
+        "irrelevantInputs": [
+          {
+            "source": "DESCRIPTION",
+            "description": "미세플라스틱과 인간의 뇌에 관한 외부 영상 홍보 문구",
+            "reason": "현재 코끼리 영상 내용과 무관하다."
+          },
+          {
+            "source": "STT",
+            "description": "코끼리의 trunks가 punks로 인식된 구간",
+            "reason": "음성 인식 오류이므로 그대로 요약하면 안 된다."
+          }
+        ],
+        "entities": [],
+        "claims": [],
+        "expectedActions": ["NONE"]
+      },
+      "annotation": {
+        "status": "DRAFT",
+        "annotators": ["codex-assisted-evidence-draft"],
+        "reviewedAt": "2026-11-10",
+        "notes": ["설명란 충돌에 대한 회귀 테스트로 사용한다."]
+      }
+    },
+    {
+      "id": "pilot-002",
+      "source": {
+        "platform": "YOUTUBE",
+        "url": "https://www.youtube.com/watch?v=J4vEoFVcguw",
+        "videoId": "J4vEoFVcguw",
+        "title": "청담동 유명 고깃집 된장찌개 따라하기 1분 초간단 레시피",
+        "creator": "1분요리 뚝딱이형",
+        "durationSeconds": 60,
+        "language": "ko",
+        "accessedAt": "2026-11-10"
+      },
+      "inputProfile": {
+        "modalityProfile": "MIXED",
+        "availableModalities": ["STT", "OCR", "VISION", "METADATA"],
+        "challenges": ["FAST_SPEECH", "INGREDIENT_STT_ERRORS", "MULTI_STEP"]
+      },
+      "gold": {
+        "primaryCategory": "음식/레시피",
+        "secondaryCategories": ["생활정보"],
+        "contentType": "RECIPE",
+        "mainTopic": "고깃집 스타일 된장찌개 조리법",
+        "referenceSummary": "된장찌개\n- 식용유 1, 된장 3, 쌈장 3을 넣고 볶는다.\n- 물 2, 애호박 1/4, 양파 1/4, 팽이버섯, 대파, 다시다 0.5, 차돌박이를 순서대로 넣는다.\n- 계량 단위와 재료별 투입 시점은 재확인이 필요하다.",
+        "requiredFacts": [
+          {
+            "id": "f1",
+            "text": "식용유 1, 된장 3, 쌈장 3을 넣고 볶는다. 계량 단위는 재확인한다.",
+            "evidence": [{"modality": "STT", "startMs": 8540, "endMs": 22980}]
+          },
+          {
+            "id": "f2",
+            "text": "물 2, 애호박 1/4, 양파 1/4, 팽이버섯, 대파를 순서대로 넣는다. 계량 단위는 재확인한다.",
+            "evidence": [{"modality": "STT", "startMs": 22980, "endMs": 45140}]
+          },
+          {
+            "id": "f3",
+            "text": "다시다 0.5와 차돌박이를 넣는다. 선택 여부와 단위는 재확인한다.",
+            "evidence": [
+              {"modality": "STT", "startMs": 45140, "endMs": 54040},
+              {"modality": "OCR", "timeMs": 51418}
+            ]
+          }
+        ],
+        "optionalFacts": [
+          {
+            "id": "o1",
+            "text": "약한 불에서 장을 기름에 볶는다.",
+            "evidence": [{"modality": "STT", "startMs": 8540, "endMs": 17980}]
+          }
+        ],
+        "irrelevantInputs": [
+          {
+            "source": "STT",
+            "description": "재료명과 계량이 일부 잘못 인식된 빠른 음성 구간",
+            "reason": "불확실한 정확한 계량을 임의로 복원하면 안 된다."
+          }
+        ],
+        "entities": [],
+        "claims": [],
+        "expectedActions": ["CHECKLIST"]
+      },
+      "annotation": {
+        "status": "DRAFT",
+        "annotators": ["codex-assisted-evidence-draft"],
+        "reviewedAt": "2026-11-10",
+        "notes": ["사용자 검토 반영. 계량 단위와 고추장·두부 및 선택 재료 여부는 재확인 필요."]
+      }
+    },
+    {
+      "id": "pilot-003",
+      "source": {
+        "platform": "YOUTUBE",
+        "url": "https://www.youtube.com/watch?v=RQ9kceb4HGI",
+        "videoId": "RQ9kceb4HGI",
+        "title": "Don't forget this important skincare tip! #shorts",
+        "creator": "Ms Afful",
+        "durationSeconds": 11,
+        "language": "en",
+        "accessedAt": "2026-11-10"
+      },
+      "inputProfile": {
+        "modalityProfile": "OCR_DOMINANT",
+        "availableModalities": ["OCR", "VISION", "METADATA"],
+        "challenges": ["NO_SPEECH", "HEALTH_BEAUTY_CLAIM", "VERY_SHORT"]
+      },
+      "gold": {
+        "primaryCategory": "뷰티/패션",
+        "secondaryCategories": ["건강/운동"],
+        "contentType": "HOW_TO",
+        "mainTopic": "수분 섭취와 피부 수분에 관한 짧은 팁",
+        "referenceSummary": "물을 충분히 마시는 것이 피부 수분에 도움이 될 수 있으니 수분을 섭취하라는 팁이다. 다만 추가 수분 섭취의 피부 개선 근거는 제한적이므로 확정적인 효과로 표현하면 안 된다.",
+        "requiredFacts": [
+          {
+            "id": "f1",
+            "text": "수분을 유지하는 것이 피부에도 도움이 될 수 있다고 말한다.",
+            "evidence": [{"modality": "OCR", "timeMs": 4667}]
+          },
+          {
+            "id": "f2",
+            "text": "물을 마시라고 권한다.",
+            "evidence": [{"modality": "OCR", "timeMs": 9367}]
+          }
+        ],
+        "optionalFacts": [],
+        "irrelevantInputs": [],
+        "entities": [],
+        "claims": [
+          {
+            "id": "c1",
+            "text": "물을 더 마시면 피부 수분 상태에 도움이 될 수 있다.",
+            "type": "HEALTH_BEAUTY",
+            "verifiable": true,
+            "expectedVerdict": "PARTIALLY_SUPPORTED",
+            "rationale": "체계적 문헌고찰은 일부 개선 가능성을 보고하지만 연구 수와 질이 약하다고 평가한다.",
+            "evidence": [{"modality": "OCR", "timeMs": 4667}],
+            "referenceUrls": ["https://pubmed.ncbi.nlm.nih.gov/29392767/"]
+          }
+        ],
+        "expectedActions": ["REMINDER"]
+      },
+      "annotation": {
+        "status": "DRAFT",
+        "annotators": ["codex-assisted-evidence-draft"],
+        "reviewedAt": "2026-11-10",
+        "notes": ["의학적 조언이 아니라 제한적인 생활 팁으로 표현해야 한다."]
+      }
+    },
+    {
+      "id": "pilot-004",
+      "source": {
+        "platform": "YOUTUBE",
+        "url": "https://www.youtube.com/watch?v=RBeFWkXolZo",
+        "videoId": "RBeFWkXolZo",
+        "title": "홈트레이닝의 정석 스쿼트!! 올바른 자세는?",
+        "creator": "규림한의원",
+        "durationSeconds": 37,
+        "language": "ko",
+        "accessedAt": "2026-11-10"
+      },
+      "inputProfile": {
+        "modalityProfile": "MIXED",
+        "availableModalities": ["OCR", "VISION", "METADATA"],
+        "challenges": ["NO_DECODED_SPEECH", "FORM_DEPENDS_ON_VISION", "OCR_TYPOS"]
+      },
+      "gold": {
+        "primaryCategory": "건강/운동",
+        "secondaryCategories": ["생활정보"],
+        "contentType": "HOW_TO",
+        "mainTopic": "기본 스쿼트 자세 안내",
+        "referenceSummary": "양팔을 교차해 어깨를 잡고 다리를 골반 너비로 선다. 무릎이 발끝보다 앞으로 나오지 않게 굽히며 체중을 뒤꿈치에 두고, 뒤꿈치로 밀듯 허벅지에 힘을 주어 일어나는 동작을 10회 반복한다.",
+        "requiredFacts": [
+          {
+            "id": "f1",
+            "text": "양손을 어깨에 교차하고 다리를 골반 너비로 선다.",
+            "evidence": [{"modality": "OCR", "timeMs": 10544}]
+          },
+          {
+            "id": "f2",
+            "text": "무릎이 발끝보다 앞으로 나오지 않게 굽히고 체중을 뒤꿈치에 둔다.",
+            "evidence": [
+              {"modality": "OCR", "timeMs": 21121},
+              {"modality": "VISION", "timeMs": 21121}
+            ]
+          },
+          {
+            "id": "f3",
+            "text": "뒤꿈치로 밀듯 허벅지에 힘을 주어 일어나며 10회 반복한다.",
+            "evidence": [{"modality": "OCR", "timeMs": 26393}]
+          }
+        ],
+        "optionalFacts": [
+          {
+            "id": "o1",
+            "text": "몸 상태에 맞게 동작을 변형할 수 있다고 안내한다.",
+            "evidence": [{"modality": "OCR", "timeMs": 10544}]
+          }
+        ],
+        "irrelevantInputs": [
+          {
+            "source": "OCR",
+            "description": "병원 로고와 반복되는 코너 제목",
+            "reason": "동작 요약에 필요하지 않은 워터마크성 텍스트다."
+          }
+        ],
+        "entities": [
+          {
+            "name": "규림한의원",
+            "type": "SERVICE",
+            "evidence": [{"modality": "OCR", "timeMs": 5272}]
+          }
+        ],
+        "claims": [
+          {
+            "id": "c1",
+            "text": "스쿼트할 때 무릎이 발끝보다 앞으로 나오지 않게 해야 한다.",
+            "type": "HEALTH_BEAUTY",
+            "verifiable": true,
+            "expectedVerdict": "NOT_ASSESSED",
+            "rationale": "운동 전문가의 2차 검수가 필요한 자세 지침이다.",
+            "evidence": [{"modality": "OCR", "timeMs": 21121}],
+            "referenceUrls": []
+          }
+        ],
+        "expectedActions": ["CHECKLIST"]
+      },
+      "annotation": {
+        "status": "DRAFT",
+        "annotators": ["codex-assisted-evidence-draft"],
+        "reviewedAt": "2026-11-10",
+        "notes": ["운동 자세의 의학적 타당성은 전문가 검수 전 점수에 포함하지 않는다."]
+      }
+    },
+    {
+      "id": "pilot-005",
+      "source": {
+        "platform": "YOUTUBE",
+        "url": "https://www.youtube.com/watch?v=nQ6xqiJKMzE",
+        "videoId": "nQ6xqiJKMzE",
+        "title": "[공부가 머니?] 수능 만점자 민영의 공부 방법 TMI 대방출! 20200103",
+        "creator": "MBCentertainment",
+        "durationSeconds": 98,
+        "language": "ko",
+        "accessedAt": "2026-11-10"
+      },
+      "inputProfile": {
+        "modalityProfile": "STT_DOMINANT",
+        "availableModalities": ["STT", "OCR", "VISION", "METADATA"],
+        "challenges": ["LONGER_SHORT_FORM", "MULTI_TIP", "OCR_CLUTTER", "NAMED_PERSON_STT_ERROR"]
+      },
+      "gold": {
+        "primaryCategory": "학습/커리어",
+        "secondaryCategories": ["생활정보"],
+        "contentType": "HOW_TO",
+        "mainTopic": "주간 계획과 10분 단위 플래너를 활용한 공부법",
+        "referenceSummary": "일주일 공부 계획을 과목별 세부 항목으로 나누고, 매일 할 일을 플래너로 옮겨 실행하는 방법을 소개한다. 10분 단위 기록으로 공부한 시간과 빈 시간을 확인해 과목별 균형과 다음 날 계획을 조정한다.",
+        "requiredFacts": [
+          {
+            "id": "f1",
+            "text": "일주일 계획을 미리 세우고 과목별 세부 항목으로 나눈다.",
+            "evidence": [{"modality": "STT", "startMs": 39780, "endMs": 57140}]
+          },
+          {
+            "id": "f2",
+            "text": "주간 계획의 항목을 매일 플래너로 옮겨 공부한다.",
+            "evidence": [{"modality": "STT", "startMs": 57140, "endMs": 66340}]
+          },
+          {
+            "id": "f3",
+            "text": "10분 단위로 공부 여부를 기록해 빈 시간과 과목 균형을 점검한다.",
+            "evidence": [{"modality": "STT", "startMs": 70020, "endMs": 96300}]
+          }
+        ],
+        "optionalFacts": [
+          {
+            "id": "o1",
+            "text": "영상은 만년 2등에서 수능 만점자가 된 학생의 공부법을 소개한다.",
+            "evidence": [
+              {"modality": "OCR", "timeMs": 27828},
+              {"modality": "STT", "startMs": 0, "endMs": 19780}
+            ]
+          }
+        ],
+        "irrelevantInputs": [
+          {
+            "source": "OCR",
+            "description": "플래너 화면에서 잘못 인식된 교재명과 난독성 문자열",
+            "reason": "핵심 공부법과 무관하고 정확하지 않다."
+          }
+        ],
+        "entities": [
+          {
+            "name": "MBC",
+            "type": "BRAND",
+            "evidence": [{"modality": "OCR", "timeMs": 0}]
+          }
+        ],
+        "claims": [],
+        "expectedActions": ["CHECKLIST", "REMINDER"]
+      },
+      "annotation": {
+        "status": "DRAFT",
+        "annotators": ["codex-assisted-evidence-draft"],
+        "reviewedAt": "2026-11-10",
+        "notes": ["인명은 STT 오류 가능성이 있어 엔티티 골드에서 제외했다."]
+      }
+    },
+    {
+      "id": "pilot-006",
+      "source": {
+        "platform": "YOUTUBE",
+        "url": "https://www.youtube.com/watch?v=hh-NimA2nCs",
+        "videoId": "hh-NimA2nCs",
+        "title": "유용한 핸드폰 꿀팁과 비밀 기능 #shorts",
+        "creator": "5 분 Tricks",
+        "durationSeconds": 60,
+        "language": "en",
+        "accessedAt": "2026-11-10"
+      },
+      "inputProfile": {
+        "modalityProfile": "VISION_DOMINANT",
+        "availableModalities": ["OCR", "VISION", "METADATA"],
+        "challenges": ["MISLEADING_TITLE", "NO_SPEECH", "MULTI_STEP_VISUAL_DIY", "SPARSE_OCR"]
+      },
+      "gold": {
+        "primaryCategory": "생활정보",
+        "secondaryCategories": ["기타"],
+        "contentType": "HOW_TO",
+        "mainTopic": "여러 가지 DIY 휴대폰 케이스 꾸미기 아이디어",
+        "referenceSummary": "휴대폰 케이스 DIY 아이디어\n- 오브젝트를 달걀 노른자로 활용해 꾸민다.\n- 야광 스티커를 붙여 어두운 곳에서도 찾기 쉽게 한다.\n- 기하학 무늬와 짝이 되는 베스트 프렌드 케이스를 만든다.",
+        "targets": [
+          {"id": "egg", "name": "달걀 장식", "type": "OTHER", "requiredFacts": [{"id": "egg-f1", "text": "오브젝트를 달걀 노른자로 활용한다.", "evidence": [{"modality": "VISION", "timeMs": 8560}]}], "optionalFacts": [], "steps": [], "externalExpectations": []},
+          {"id": "glow", "name": "야광 스티커", "type": "OTHER", "requiredFacts": [{"id": "glow-f1", "text": "야광 스티커를 붙여 어두운 곳에서 찾기 쉽게 한다.", "evidence": [{"modality": "VISION", "note": "사용자 영상 검토; 정확한 시각 확인 필요"}]}], "optionalFacts": [], "steps": [], "externalExpectations": []},
+          {"id": "pattern", "name": "기하학 무늬", "type": "OTHER", "requiredFacts": [{"id": "pattern-f1", "text": "케이스에 기하학 무늬를 만든다.", "evidence": [{"modality": "VISION", "timeMs": 25680}]}], "optionalFacts": [], "steps": [], "externalExpectations": []},
+          {"id": "friend", "name": "베스트 프렌드 케이스", "type": "OTHER", "requiredFacts": [{"id": "friend-f1", "text": "두 케이스가 짝을 이루도록 만든다.", "evidence": [{"modality": "VISION", "timeMs": 60000}]}], "optionalFacts": [], "steps": [], "externalExpectations": []}
+        ],
+        "requiredFacts": [
+          {
+            "id": "f1",
+            "text": "영상의 실제 내용은 휴대폰 케이스를 직접 꾸미는 DIY 시연이다.",
+            "evidence": [
+              {"modality": "VISION", "timeMs": 8560},
+              {"modality": "VISION", "timeMs": 42840}
+            ]
+          },
+          {
+            "id": "f2",
+            "text": "입체 달걀 장식과 기하학 무늬 등 여러 디자인을 보여준다.",
+            "evidence": [
+              {"modality": "VISION", "timeMs": 8560},
+              {"modality": "VISION", "timeMs": 25680}
+            ]
+          },
+          {
+            "id": "f3",
+            "text": "두 개가 서로 짝을 이루는 베스트 프렌드 케이스를 만든다.",
+            "evidence": [
+              {"modality": "VISION", "timeMs": 60000},
+              {"modality": "OCR", "timeMs": 60000}
+            ]
+          }
+        ],
+        "optionalFacts": [],
+        "irrelevantInputs": [
+          {
+            "source": "TITLE",
+            "description": "유용한 휴대폰 팁과 비밀 기능을 소개한다는 제목",
+            "reason": "실제 영상은 휴대폰 기능이 아니라 케이스 공예를 보여준다."
+          },
+          {
+            "source": "OCR",
+            "description": "BEST FRIEND 문구의 불완전한 OCR 조각",
+            "reason": "중복·오인식 조각은 하나의 의미 단위로 합쳐야 한다."
+          }
+        ],
+        "entities": [],
+        "claims": [],
+        "expectedActions": ["CHECKLIST"]
+      },
+      "annotation": {
+        "status": "DRAFT",
+        "annotators": ["codex-assisted-evidence-draft"],
+        "reviewedAt": "2026-11-10",
+        "notes": ["사용자 검토: 야광 스티커 아이디어 추가. 전체 디자인과 시점은 재확인 필요."]
+      }
+    },
+    {
+      "id": "pilot-007",
+      "source": {
+        "platform": "YOUTUBE",
+        "url": "https://www.youtube.com/watch?v=Tc9ZjqYT5lY",
+        "videoId": "Tc9ZjqYT5lY",
+        "title": "서울에서 제일 애정하는 장소! #shorts",
+        "creator": "keemsio",
+        "durationSeconds": 60,
+        "language": "ko",
+        "accessedAt": "2026-11-10"
+      },
+      "inputProfile": {
+        "modalityProfile": "MIXED",
+        "availableModalities": ["OCR", "VISION", "METADATA"],
+        "challenges": ["NO_SPEECH", "PLACE_ENTITY_FROM_OCR", "OCR_TYPOS"]
+      },
+      "gold": {
+        "primaryCategory": "장소/여행",
+        "secondaryCategories": ["학습/커리어"],
+        "contentType": "PLACE_RECOMMENDATION",
+        "mainTopic": "서울의 역사적 장소 추천",
+        "referenceSummary": "서울 역사적 장소 추천\n- 청계천: 서울특별시 종로구.\n- 세종대왕 관련 장소: 위치 확인 필요.\n- 경복궁: 영상은 한글 창제와 경사를 축하하는 역사를 언급한다.\n- 국립현대미술관: 위치와 소개 내용 확인 필요.",
+        "targets": [
+          {"id": "cheonggyecheon", "name": "청계천", "type": "PLACE", "requiredFacts": [{"id": "c-f1", "text": "서울 종로구에 있는 장소로 소개한다.", "evidence": [{"modality": "OCR", "note": "사용자 영상 검토; 정확한 화면 시각 확인 필요"}]}], "optionalFacts": [], "steps": [], "externalExpectations": [{"id": "c-e1", "purpose": "ENRICH_INFORMATION", "text": "방문 위치 또는 지도 검색 지점을 확인한다.", "reviewStatus": "NOT_REVIEWED", "sources": []}]},
+          {"id": "sejong", "name": "세종대왕 관련 장소", "type": "PLACE", "requiredFacts": [{"id": "s-f1", "text": "세종대왕 관련 장소를 소개한다. 정확한 장소명은 확인이 필요하다.", "evidence": [{"modality": "OCR", "timeMs": 8542}]}], "optionalFacts": [], "steps": [], "externalExpectations": []},
+          {"id": "gyeongbokgung", "name": "경복궁", "type": "PLACE", "requiredFacts": [{"id": "g-f1", "text": "영상에서 한글 창제와 나라의 경사를 축하하는 역사를 언급한다.", "evidence": [{"modality": "OCR", "timeMs": 17117}, {"modality": "OCR", "timeMs": 25692}]}], "optionalFacts": [], "steps": [], "externalExpectations": [{"id": "g-e1", "purpose": "VERIFY_CLAIM", "text": "한글 창제와 경복궁의 관계를 공식 역사 자료로 확인한다.", "preferredSourceType": "GOVERNMENT", "reviewStatus": "NOT_REVIEWED", "expectedVerdict": "NOT_ASSESSED", "sources": []}]},
+          {"id": "mmca", "name": "국립현대미술관", "type": "PLACE", "requiredFacts": [{"id": "m-f1", "text": "현대미술관을 추천한다. 지점과 상세 정보는 확인이 필요하다.", "evidence": [{"modality": "OCR", "timeMs": 51417}]}], "optionalFacts": [], "steps": [], "externalExpectations": [{"id": "m-e1", "purpose": "ENRICH_INFORMATION", "text": "해당 지점의 주소 및 운영시간을 확인한다.", "preferredSourceType": "OFFICIAL", "reviewStatus": "NOT_REVIEWED", "sources": []}]}
+        ],
+        "requiredFacts": [
+          {
+            "id": "f1",
+            "text": "경복궁을 추천 장소 중 하나로 소개한다.",
+            "evidence": [
+              {"modality": "OCR", "timeMs": 25692},
+              {"modality": "VISION", "timeMs": 34267}
+            ]
+          },
+          {
+            "id": "f2",
+            "text": "경복궁을 사랑받는 랜드마크로 표현한다.",
+            "evidence": [{"modality": "OCR", "timeMs": 34267}]
+          },
+          {
+            "id": "f3",
+            "text": "국립현대미술관을 비롯한 현대미술 관련 장소를 소개한다. 지점과 상세 내용은 재확인한다.",
+            "evidence": [{"modality": "OCR", "timeMs": 51417}]
+          }
+        ],
+        "optionalFacts": [],
+        "irrelevantInputs": [
+          {
+            "source": "OCR",
+            "description": "세종대왕 관련 장소와 주소를 불완전하게 인식한 OCR 조각",
+            "reason": "장소를 제외하지 말고 실제 명칭과 주소를 원본에서 확인해야 한다."
+          }
+        ],
+        "entities": [
+          {
+            "name": "경복궁",
+            "type": "PLACE",
+            "evidence": [{"modality": "OCR", "timeMs": 25692}]
+          },
+          {
+            "name": "서울",
+            "type": "PLACE",
+            "evidence": [{"modality": "METADATA", "note": "영상 제목과 장소 화면을 함께 확인했다."}]
+          }
+        ],
+        "claims": [
+          {
+            "id": "c1",
+            "text": "한글이 경복궁에서 창제되었다.",
+            "type": "LOCATION",
+            "verifiable": true,
+            "expectedVerdict": "NOT_ASSESSED",
+            "rationale": "역사 자료를 이용한 2차 검수가 필요하다.",
+            "evidence": [{"modality": "OCR", "timeMs": 17117}],
+            "referenceUrls": []
+          }
+        ],
+        "expectedActions": ["MAP"]
+      },
+      "annotation": {
+        "status": "DRAFT",
+        "annotators": ["codex-assisted-evidence-draft"],
+        "reviewedAt": "2026-11-10",
+        "notes": ["사용자 검토: 청계천, 세종대왕 관련 장소, 경복궁, 국립현대미술관을 개별 대상에 추가해야 함. 정확한 주소와 각 설명, 시점은 미확인."]
+      }
+    },
+    {
+      "id": "pilot-008",
+      "evaluationStatus": "EXCLUDED",
+      "exclusionReason": "사용자 요청: 정보성 영상이 아닌 예고편",
+      "source": {
+        "platform": "YOUTUBE",
+        "url": "https://www.youtube.com/watch?v=WOsAQPbn7m4",
+        "videoId": "WOsAQPbn7m4",
+        "title": "[일타증금] 예고편ㅣ금융전문가가 알려주는 금융 상식과 투자!",
+        "creator": "한국증권금융",
+        "durationSeconds": 33,
+        "language": "ko",
+        "accessedAt": "2026-11-10"
+      },
+      "inputProfile": {
+        "modalityProfile": "STT_DOMINANT",
+        "availableModalities": ["STT", "OCR", "VISION", "METADATA"],
+        "challenges": ["FINANCIAL_DOMAIN", "TRAILER_NOT_FULL_ADVICE", "MONTAGE_QUOTES"]
+      },
+      "gold": {
+        "primaryCategory": "생활정보",
+        "secondaryCategories": ["학습/커리어"],
+        "contentType": "EDUCATIONAL",
+        "mainTopic": "금융 상식과 투자 교육 프로그램 예고편",
+        "referenceSummary": "한국증권금융이 금융 용어, 우리사주, 자본시장 유동성, 투자 등을 다룰 교육 콘텐츠를 예고하는 영상이다. 짧게 편집된 발언들은 완결된 투자 조언으로 받아들이면 안 된다.",
+        "requiredFacts": [
+          {
+            "id": "f1",
+            "text": "금융 상식과 투자 관련 교육 콘텐츠의 예고편이다.",
+            "evidence": [
+              {"modality": "METADATA", "note": "제목에 예고편으로 명시되어 있다."},
+              {"modality": "OCR", "timeMs": 14133}
+            ]
+          },
+          {
+            "id": "f2",
+            "text": "우리사주, 자본시장 유동성, 금융 용어와 투자 등이 예고 주제로 등장한다.",
+            "evidence": [{"modality": "STT", "startMs": 0, "endMs": 28320}]
+          }
+        ],
+        "optionalFacts": [],
+        "irrelevantInputs": [
+          {
+            "source": "STT",
+            "description": "은행을 멀리하고 증권사와 친해져야 한다는 짧은 편집 발언",
+            "reason": "예고편 문맥의 발췌문이므로 사용자 투자 조언으로 재구성하면 안 된다."
+          }
+        ],
+        "entities": [
+          {
+            "name": "한국증권금융",
+            "type": "SERVICE",
+            "evidence": [{"modality": "OCR", "timeMs": 0}]
+          }
+        ],
+        "claims": [],
+        "expectedActions": ["NONE"]
+      },
+      "annotation": {
+        "status": "DRAFT",
+        "annotators": ["codex-assisted-evidence-draft"],
+        "reviewedAt": "2026-11-10",
+        "notes": ["금융 조언 과잉 생성 방지를 평가한다."]
+      }
+    },
+    {
+      "id": "pilot-009",
+      "source": {
+        "platform": "YOUTUBE",
+        "url": "https://www.youtube.com/watch?v=bjFKh6wOS7U",
+        "videoId": "bjFKh6wOS7U",
+        "title": "알면 치매 예방에 좋아요!! #지식건강 #노벨상 #과학상식 #지식채널 #유튜브쇼츠",
+        "creator": "코코하트TV",
+        "durationSeconds": 24,
+        "language": "ko",
+        "accessedAt": "2026-11-10"
+      },
+      "inputProfile": {
+        "modalityProfile": "MIXED",
+        "availableModalities": ["STT", "OCR", "VISION", "METADATA"],
+        "challenges": ["MISLEADING_HEALTH_TITLE", "SCIENCE_CONFLATION", "FACT_CHECK_REQUIRED"]
+      },
+      "gold": {
+        "primaryCategory": "학습/커리어",
+        "secondaryCategories": ["생활정보"],
+        "contentType": "NEWS_CLAIM",
+        "mainTopic": "2023년 노벨물리학상과 양자컴퓨터를 연결해 설명하는 과학 상식 영상",
+        "referenceSummary": "과학 상식 · 양자컴퓨터\n- 영상은 노벨물리학상 수상자 세 사람을 언급한다.\n- 양자컴퓨터의 냉각 장치는 거대한 샹들리에처럼 보인다.\n- 양자컴퓨터가 어려운 문제를 빠르게 푸는 잠재력을 설명한다.\n- 쉬운 비유: 동전의 앞뒷면을 동시에 보고 계산하는 것.\n- 수상 사유와 계산 속도의 범위는 별도 근거로 확인한다.",
+        "requiredFacts": [
+          {
+            "id": "f1",
+            "text": "영상은 2023년 노벨물리학상 수상자들을 양자역학 연구자로 소개한다.",
+            "evidence": [
+              {"modality": "STT", "startMs": 2480, "endMs": 7520},
+              {"modality": "OCR", "timeMs": 3433}
+            ]
+          },
+          {
+            "id": "f2",
+            "text": "양자컴퓨터가 일부 어려운 문제를 빠르게 해결할 잠재력이 있다고 설명한다.",
+            "evidence": [{"modality": "STT", "startMs": 7520, "endMs": 24160}]
+          },
+          {
+            "id": "f3",
+            "text": "거대한 샹들리에처럼 생긴 원통형 냉각 시스템을 보여준다.",
+            "evidence": [{"modality": "OCR", "timeMs": 6900}]
+          },
+          {
+            "id": "f4",
+            "text": "동전의 앞뒷면을 동시에 보는 것에 비유한다.",
+            "evidence": [{"modality": "STT", "startMs": 16280, "endMs": 20120}]
+          }
+        ],
+        "optionalFacts": [],
+        "irrelevantInputs": [
+          {
+            "source": "TITLE",
+            "description": "이 내용을 알면 치매 예방에 좋다는 제목",
+            "reason": "영상 본문에 치매 예방을 설명하거나 입증하는 내용이 없다."
+          }
+        ],
+        "entities": [
+          {
+            "name": "Pierre Agostini",
+            "type": "PERSON",
+            "evidence": [{"modality": "OCR", "timeMs": 3433}]
+          },
+          {
+            "name": "Ferenc Krausz",
+            "type": "PERSON",
+            "evidence": [{"modality": "OCR", "timeMs": 3433}]
+          },
+          {
+            "name": "Anne L’Huillier",
+            "type": "PERSON",
+            "evidence": [{"modality": "OCR", "timeMs": 3433}]
+          }
+        ],
+        "claims": [
+          {
+            "id": "c1",
+            "text": "2023년 노벨물리학상은 양자컴퓨터 연구에 수여됐다.",
+            "type": "OTHER",
+            "verifiable": true,
+            "expectedVerdict": "NOT_ASSESSED",
+            "rationale": "영상은 수상자 소개와 양자컴퓨터 설명을 이어 붙였으나 수상 이유를 명시적으로 주장하는지 전체 영상 검토가 필요하다. 공식 수상 사유는 아토초 빛 펄스 생성 실험 방법이다.",
+            "evidence": [
+              {"modality": "STT", "startMs": 2480, "endMs": 11000},
+              {"modality": "OCR", "timeMs": 3433}
+            ],
+            "referenceUrls": ["https://www.nobelprize.org/prizes/physics/2023/press-release/"]
+          },
+          {
+            "id": "c2",
+            "text": "이 영상의 내용을 아는 것이 치매 예방에 도움이 된다.",
+            "type": "HEALTH_BEAUTY",
+            "verifiable": true,
+            "expectedVerdict": "INSUFFICIENT_EVIDENCE",
+            "rationale": "영상 본문에 치매 예방과의 연결 근거가 제시되지 않는다.",
+            "evidence": [{"modality": "METADATA", "note": "제목에서만 주장한다."}],
+            "referenceUrls": []
+          }
+        ],
+        "expectedActions": ["WEB_SEARCH"]
+      },
+      "annotation": {
+        "status": "DRAFT",
+        "annotators": ["codex-assisted-evidence-draft"],
+        "reviewedAt": "2026-11-10",
+        "notes": ["사용자 요청: 정보 중심 개조식. 동전 비유는 엄밀한 정의가 아닌 영상 속 비유이며 속도는 모든 문제에 일반화하지 않음."]
+      }
+    },
+    {
+      "id": "pilot-010",
+      "source": {
+        "platform": "YOUTUBE",
+        "url": "https://www.youtube.com/watch?v=iXixqKyWUw8",
+        "videoId": "iXixqKyWUw8",
+        "title": "Zhik Deckbeater Sailing Shorts - Product Review",
+        "creator": "Sailing Chandlery",
+        "durationSeconds": 66,
+        "language": "en",
+        "accessedAt": "2026-11-10"
+      },
+      "inputProfile": {
+        "modalityProfile": "STT_DOMINANT",
+        "availableModalities": ["STT", "OCR", "VISION", "METADATA"],
+        "challenges": ["PRODUCT_NAME_STT_ERROR", "PROMOTIONAL_CLAIMS", "FEATURE_OPINION_MIX"]
+      },
+      "gold": {
+        "primaryCategory": "제품/쇼핑",
+        "secondaryCategories": ["건강/운동"],
+        "contentType": "PRODUCT_REVIEW",
+        "mainTopic": "Zhik Deckbeater 세일링 쇼츠의 소재와 착용 특징 소개",
+        "referenceSummary": "Zhik Deckbeater 세일링 쇼츠를 소개한다. 앞면은 신축성 있는 스판덱스이고 뒷면은 마모에 강한 소재와 패딩을 사용해 세일링 중 움직임과 착석 편의를 돕는다고 설명하며, 영상 말미에는 판매처의 할인·적립 안내가 나온다.",
+        "requiredFacts": [
+          {
+            "id": "f1",
+            "text": "Zhik Deckbeater 세일링 쇼츠를 소개하는 제품 리뷰다.",
+            "evidence": [{"modality": "STT", "startMs": 400, "endMs": 8320}]
+          },
+          {
+            "id": "f2",
+            "text": "앞면은 신축성 있는 스판덱스이고 뒷면은 내구성 있는 소재라고 설명한다.",
+            "evidence": [{"modality": "STT", "startMs": 8320, "endMs": 29040}]
+          },
+          {
+            "id": "f3",
+            "text": "뒷면 패딩이 장시간 세일링이나 하이킹 동작의 편안함을 돕는다고 설명한다.",
+            "evidence": [{"modality": "STT", "startMs": 29280, "endMs": 45120}]
+          }
+        ],
+        "optionalFacts": [
+          {
+            "id": "o1",
+            "text": "판매처가 첫 주문 할인과 적립 포인트를 홍보한다.",
+            "evidence": [{"modality": "STT", "startMs": 45120, "endMs": 57920}]
+          }
+        ],
+        "irrelevantInputs": [
+          {
+            "source": "STT",
+            "description": "Zhik과 Dinghy Rope 이름이 Zeke와 Dinger Road로 인식된 부분",
+            "reason": "제목·화면 텍스트와 교차해 제품 및 판매처 이름을 복원해야 한다."
+          }
+        ],
+        "entities": [
+          {
+            "name": "Zhik Deckbeater Sailing Shorts",
+            "type": "PRODUCT",
+            "evidence": [
+              {"modality": "METADATA", "note": "영상 제목"},
+              {"modality": "STT", "startMs": 4480, "endMs": 8320}
+            ]
+          },
+          {
+            "name": "Zhik",
+            "type": "BRAND",
+            "evidence": [{"modality": "METADATA", "note": "영상 제목"}]
+          },
+          {
+            "name": "Dinghy Rope",
+            "type": "SERVICE",
+            "evidence": [{"modality": "OCR", "timeMs": 65699}]
+          }
+        ],
+        "claims": [
+          {
+            "id": "c1",
+            "text": "제품의 뒷면 소재가 반복적인 갑판 움직임에서도 쉽게 마모되지 않는다.",
+            "type": "PRODUCT_PERFORMANCE",
+            "verifiable": true,
+            "expectedVerdict": "NOT_ASSESSED",
+            "rationale": "판매 영상의 성능 주장으로 제조사 자료나 독립 리뷰 확인이 필요하다.",
+            "evidence": [{"modality": "STT", "startMs": 16720, "endMs": 29040}],
+            "referenceUrls": []
+          },
+          {
+            "id": "c2",
+            "text": "첫 주문 고객에게 10% 할인을 제공한다.",
+            "type": "PRICE",
+            "verifiable": true,
+            "expectedVerdict": "NOT_ASSESSED",
+            "rationale": "게시 시점에 의존하는 프로모션이므로 현재 정보로 단정하면 안 된다.",
+            "evidence": [{"modality": "STT", "startMs": 45120, "endMs": 50320}],
+            "referenceUrls": []
+          }
+        ],
+        "expectedActions": ["PRODUCT_COMPARE", "WEB_SEARCH"]
+      },
+      "annotation": {
+        "status": "DRAFT",
+        "annotators": ["codex-assisted-evidence-draft"],
+        "reviewedAt": "2026-11-10",
+        "notes": ["제품 특징과 판매자의 홍보성 성능 주장을 구분한다."]
+      }
+    }
+  ]
+}
