@@ -18,6 +18,9 @@ import { Ionicons } from '@expo/vector-icons';
 
 import BottomNav from './src/components/BottomNav';
 import ContentCard from './src/components/ContentCard';
+import SearchResultsPanel from './src/components/ui/SearchResultsPanel';
+// SAVEON_SEARCH_UX_V1
+// SAVEON_SEARCH_RELEVANCE_V1
 import AnalysisProgress from './src/components/ui/AnalysisProgress';
 import { theme } from './src/theme';
 import { isSaveLinkValid, saveLinkIdentity, saveLinkPlatform } from './src/lib/saveLinkUx';
@@ -211,6 +214,8 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<ContentItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchRetryKey, setSearchRetryKey] = useState(0);
+  const [searchMatchMode, setSearchMatchMode] = useState<'exact' | 'similar'>('exact');
   const [searchMode, setSearchMode] = useState<'search' | 'ask'>(
     'search',
   );
@@ -320,11 +325,16 @@ export default function App() {
             connectionFilter.type,
             connectionFilter.entity,
           );
+        } else if (searchMatchMode === 'exact') {
+          // Search by actual words found in the user's saved metadata.
+          // Never backfill unrelated top-N vector neighbors here.
+          data = await searchContents(searchTerm);
         } else {
+          // Explicit exploration mode: semantic neighbors are only candidates.
           const [keywordResult, semanticResult] =
             await Promise.allSettled([
               searchContents(searchTerm),
-              semanticSearchContents(searchTerm, 20),
+              semanticSearchContents(searchTerm, 8),
             ]);
 
           const merged = new Map<number, ApiContent>();
@@ -383,6 +393,8 @@ export default function App() {
     query,
     screen.name,
     searchMode,
+    searchMatchMode,
+    searchRetryKey,
   ]);
 
   useEffect(() => {
@@ -652,6 +664,7 @@ export default function App() {
       setContentBundle(null);
       setBundleError(null);
       setSearchMode('search');
+      setSearchMatchMode('exact');
       setQuery('');
       setSearchError(null);
       setSearchResults(contents);
@@ -3674,85 +3687,22 @@ export default function App() {
         {!connectionFilter &&
           !activeSmartCollection &&
           searchMode === 'search' && (
-          <>
-            <View style={styles.searchBox}>
-              <Ionicons
-                name="search-outline"
-                size={20}
-                color={theme.muted}
-              />
-
-              <TextInput
-                value={query}
-                onChangeText={(text) => {
-                  setConnectionFilter(null);
-                  setQuery(text);
-                }}
-                placeholder="예: 성수 데이트 카페, 여름 메이크업"
-                placeholderTextColor="#A7ABB4"
-                returnKeyType="search"
-                autoCorrect={false}
-                style={styles.searchInput}
-              />
-
-              {query.length > 0 && (
-                <Pressable
-                  onPress={() => {
-                    setConnectionFilter(null);
-                    setQuery('');
-                  }}
-                  hitSlop={8}
-                >
-                  <Ionicons
-                    name="close-circle"
-                    size={19}
-                    color={theme.muted}
-                  />
-                </Pressable>
-              )}
-            </View>
-
-            <Text style={styles.resultText}>
-              {searching
-                ? '찾고 있어요...'
-                : `${searchResults.length}개 찾았어요`}
-            </Text>
-
-            {searching ? (
-              <View style={styles.searchState}>
-                <ActivityIndicator
-                  size="small"
-                  color={theme.primary}
-                />
-                <Text style={styles.searchStateText}>
-                  비슷한 내용까지 함께 찾고 있어요.
-                </Text>
-              </View>
-            ) : searchError ? (
-              <View style={styles.emptyBox}>
-                <Text style={styles.emptyText}>
-                  {searchError}
-                </Text>
-              </View>
-            ) : searchResults.length === 0 ? (
-              <View style={styles.emptyBox}>
-                <Text style={styles.emptyText}>
-                  검색 결과가 없어요. 다른 단어로 검색해 보세요.
-                </Text>
-              </View>
-            ) : (
-              searchResults.map((item) => (
-                <ContentCard
-                  key={item.id}
-                  item={item}
-                  onPress={() =>
-                    openDetail(item.id, 'search')
-                  }
-                />
-              ))
-            )}
-          </>
-        )}
+            <SearchResultsPanel
+              query={query}
+              onQueryChange={(text) => {
+                setConnectionFilter(null);
+                setQuery(text);
+              }}
+              results={searchResults}
+              matchMode={searchMatchMode}
+              onMatchModeChange={setSearchMatchMode}
+              loading={searching}
+              error={searchError}
+              onRetry={() => setSearchRetryKey((value) => value + 1)}
+              onOpen={(itemId) => openDetail(itemId, 'search')}
+              onGoSave={() => goTab('save')}
+            />
+          )}
 
         {activeSmartCollection && (
           <>
