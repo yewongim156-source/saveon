@@ -60,6 +60,7 @@ function toContentItem(api: ApiContent): ContentItem {
     summary:
       api.summary ??
       '콘텐츠가 저장되었습니다. AI 분석을 기다리고 있어요.',
+    videoBasedSummary: api.status === 'COMPLETED',
     sourceUrl: api.sourceUrl,
     category: api.categories?.length ? api.categories : [statusText],
     keywords: api.keywords ?? [],
@@ -790,6 +791,10 @@ export default function App() {
             {detailItem.title}
           </Text>
 
+          {detailItem.videoBasedSummary && (
+            <Text style={styles.mutedText}>영상 기반 요약 · 외부 검증 여부 확인 필요</Text>
+          )}
+
           <Text style={styles.bodyText}>
             {detailItem.summary}
           </Text>
@@ -942,6 +947,11 @@ const styles = StyleSheet.create({
     color: theme.muted,
     fontSize: 14,
     lineHeight: 21,
+  },
+  mutedText: {
+    color: theme.muted,
+    fontSize: 12,
+    marginBottom: 8,
   },
   logoBubble: {
     width: 44,

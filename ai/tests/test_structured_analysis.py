@@ -8,10 +8,40 @@ from services.verified_summary import (
     _verification_status,
     apply_verified_summary,
 )
-from services.video_pipeline import build_categories, build_summary
+from services.video_pipeline import build_categories, build_summary, run_timed_ocr
 
 
 class StructuredAnalysisTests(unittest.TestCase):
+    def test_ocr_keeps_first_timestamp_and_deduplicates(self):
+        import numpy as np
+        frame = np.zeros((2, 2, 3), dtype=np.uint8)
+        with patch("services.video_pipeline._get_ocr") as reader:
+            reader.return_value.readtext.side_effect = [["제품 A"], ["제품 A", "제품 B"]]
+            result = run_timed_ocr([(0, frame), (2000, frame)])
+        self.assertEqual(result, [{"id": "ocr-001", "text": "제품 A", "timeMs": 0, "modality": "OCR"}, {"id": "ocr-002", "text": "제품 B", "timeMs": 2000, "modality": "OCR"}])
+
+    def test_keeps_target_details_and_steps(self):
+        evidence = [{"id": "stt-001", "text": "제품 A는 가볍다"}]
+        result = _normalize_result({
+            "categories": ["제품/쇼핑"],
+            "targets": [{"name": "제품 A", "nameEvidenceIds": ["stt-001"], "type": "PRODUCT", "details": [{"text": "가벼운 제형", "evidenceIds": ["stt-001"]}, {"text": "없는 정보", "evidenceIds": ["unknown"]}], "steps": []}],
+            "globalSteps": [{"text": "준비한다", "evidenceIds": ["unknown"]}],
+        }, evidence)
+        self.assertEqual(result["structured"]["targets"][0]["details"][0]["evidenceIds"], ["stt-001"])
+        self.assertEqual(len(result["structured"]["targets"][0]["details"]), 1)
+        self.assertEqual(result["structured"]["globalSteps"], [])
+        self.assertEqual(result["summary"], "제품 A\n- 가벼운 제형")
+        self.assertEqual(result["structured"]["targets"][0]["verificationStatus"], "NOT_VERIFIED")
+        self.assertEqual(result["structured"]["targets"][0]["details"][0]["evidenceStatus"], "VIDEO_ATTRIBUTED_UNVERIFIED")
+
+    def test_keeps_raw_summary_when_search_failed(self):
+        result = {"summary": "원본 요약", "structured": {"claims": [{"verifiable": True}], "factChecks": [{"verdict": "INSUFFICIENT_EVIDENCE"}]}}
+        with patch("services.verified_summary.FACT_CHECK_ENABLED", True), patch("services.verified_summary._generate_verified_summary") as generate:
+            finalized = apply_verified_summary(result)
+        generate.assert_not_called()
+        self.assertEqual(finalized["summary"], "원본 요약")
+        self.assertEqual(finalized["structured"]["verificationStatus"], "INSUFFICIENT_EVIDENCE")
+
     def test_fallback_does_not_mix_clip_labels_into_transcript_topic(self):
         categories = build_categories(
             "We are standing next to the elephants at the zoo.",
@@ -94,8 +124,8 @@ class StructuredAnalysisTests(unittest.TestCase):
 
     def test_verification_status_requires_enabled_fact_checking(self):
         structured = {
-            "claims": [{"verifiable": True}],
-            "factChecks": [{"verdict": "SUPPORTED"}],
+            "claims": [{"text": "주장 A", "verifiable": True}],
+            "factChecks": [{"claim": "주장 A", "verdict": "SUPPORTED", "sources": [{"url": "https://example.org"}]}],
         }
 
         with patch(
@@ -115,6 +145,24 @@ class StructuredAnalysisTests(unittest.TestCase):
                 _verification_status(structured),
                 "VERIFIED",
             )
+
+    def test_partial_checks_cannot_verify_all_claims(self):
+        structured = {
+            "claims": [{"text": "주장 A", "verifiable": True}, {"text": "주장 B", "verifiable": True}],
+            "factChecks": [{"claim": "주장 A", "verdict": "SUPPORTED", "sources": [{"url": "https://example.org"}]}],
+        }
+        with patch("services.verified_summary.FACT_CHECK_ENABLED", True):
+            self.assertEqual(_verification_status(structured), "PARTIALLY_VERIFIED")
+
+    def test_unrelated_or_sourceless_checks_do_not_verify_claim(self):
+        structured = {
+            "claims": [{"text": "주장 A", "verifiable": True}],
+            "factChecks": [{"claim": "주장 B", "verdict": "SUPPORTED", "sources": [{"url": "https://example.org"}]}],
+        }
+        with patch("services.verified_summary.FACT_CHECK_ENABLED", True):
+            self.assertEqual(_verification_status(structured), "INSUFFICIENT_EVIDENCE")
+            structured["factChecks"][0] = {"claim": "주장 A", "verdict": "SUPPORTED", "sources": []}
+            self.assertEqual(_verification_status(structured), "INSUFFICIENT_EVIDENCE")
 
     def test_compacts_sources_without_losing_fact_check_index(self):
         compact = _compact_fact_checks({

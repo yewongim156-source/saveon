@@ -47,15 +47,31 @@ def _verification_status(structured: dict) -> str:
     if not checks:
         return "INSUFFICIENT_EVIDENCE"
 
-    verdicts = {
-        str(check.get("verdict", "")).upper()
-        for check in checks
-    }
-    if verdicts == {"SUPPORTED"}:
+    # Checks are capped, can fail, and are not necessarily in claim order.
+    # Never mark all claims verified merely because the checks that happened
+    # to run were supported. Require a matching claim and a source per claim.
+    def claim_key(value):
+        return " ".join(str(value or "").split()).casefold()
+
+    supported = set()
+    for check in checks:
+        if str(check.get("verdict", "")).upper() != "SUPPORTED":
+            continue
+        if not any(isinstance(source, dict) and str(source.get("url", "")).strip()
+                   for source in (check.get("sources") or [])):
+            continue
+        key = claim_key(check.get("claim"))
+        if key:
+            supported.add(key)
+
+    claim_keys = [claim_key(claim.get("text")) for claim in claims]
+    supported_count = sum(bool(key) and key in supported for key in claim_keys)
+    if supported_count == len(claim_keys):
         return "VERIFIED"
-    if verdicts == {"INSUFFICIENT_EVIDENCE"}:
-        return "INSUFFICIENT_EVIDENCE"
-    return "PARTIALLY_VERIFIED"
+    if supported_count or any(str(check.get("verdict", "")).upper() in
+                              {"PARTIALLY_SUPPORTED", "CONFLICTING"} for check in checks):
+        return "PARTIALLY_VERIFIED"
+    return "INSUFFICIENT_EVIDENCE"
 
 
 def _compact_fact_checks(structured: dict) -> list[dict]:
@@ -219,7 +235,7 @@ def apply_verified_summary(result: dict) -> dict:
     structured["unverifiedNotes"] = []
     structured["summarySource"] = "RAW_ANALYSIS"
 
-    if status in {"NOT_RUN", "NO_VERIFIABLE_CLAIMS"}:
+    if status in {"NOT_RUN", "NO_VERIFIABLE_CLAIMS", "INSUFFICIENT_EVIDENCE"}:
         result["structured"] = structured
         return result
 
@@ -254,8 +270,9 @@ def apply_verified_summary(result: dict) -> dict:
                 ),
             })
         structured.update(generated)
-        structured["summarySource"] = "VERIFIED_SYNTHESIS"
-        result["summary"] = generated["verifiedSummary"]
+        structured["summarySource"] = "RAW_ANALYSIS"
+        # Preserve the attributed, evidence-linked user summary. Fact-check
+        # results are separate and are not proof for every generated detail.
     except Exception as exc:
         print(f"[VERIFIED SUMMARY] 생성 실패 - 원 요약 유지: {exc}")
 

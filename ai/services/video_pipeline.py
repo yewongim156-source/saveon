@@ -148,6 +148,10 @@ def _get_clip():
 
 
 def transcribe_video(video_path: Path) -> str:
+    return " ".join(item["text"] for item in transcribe_segments(video_path))
+
+
+def transcribe_segments(video_path: Path) -> list[dict]:
     model = _get_whisper()
     segments, _ = model.transcribe(
         str(video_path),
@@ -158,8 +162,8 @@ def transcribe_video(video_path: Path) -> str:
     for segment in segments:
         text = segment.text.strip()
         if text:
-            chunks.append(text)
-    return " ".join(chunks).strip()
+            chunks.append({"id": f"stt-{len(chunks)+1:03d}", "text": text, "startMs": round(segment.start * 1000), "endMs": round(segment.end * 1000), "modality": "STT"})
+    return chunks
 
 
 def sample_frames(video_path: Path, max_frames: int = 6) -> list[np.ndarray]:
@@ -191,6 +195,43 @@ def sample_frames(video_path: Path, max_frames: int = 6) -> list[np.ndarray]:
     capture.release()
     print(f"[VIDEO] sampled={len(frames)} total_frames={total_frames} fps={fps:.2f}")
     return frames
+
+
+def sample_ocr_frames(video_path: Path, interval_seconds: float = 2.0, max_frames: int = 60) -> list[tuple[int, np.ndarray]]:
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise RuntimeError("영상 파일을 열 수 없습니다.")
+    total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
+    if total <= 0 or fps <= 0:
+        capture.release()
+        return []
+    stride = max(1, round(interval_seconds * fps), int(np.ceil(total / max_frames)))
+    sampled = []
+    for position in range(0, total, stride):
+        capture.set(cv2.CAP_PROP_POS_FRAMES, position)
+        ok, frame = capture.read()
+        if ok and frame is not None:
+            sampled.append((round(position * 1000 / fps), frame))
+    capture.release()
+    return sampled
+
+
+def run_timed_ocr(frames: list[tuple[int, np.ndarray]]) -> list[dict]:
+    if not frames:
+        return []
+    reader = _get_ocr()
+    found = []
+    seen = set()
+    for time_ms, frame in frames:
+        lines = reader.readtext(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), detail=0, paragraph=False)
+        for line in lines:
+            text = " ".join(str(line).split()).strip()
+            key = text.casefold()
+            if len(text) >= 2 and key not in seen:
+                seen.add(key)
+                found.append({"id": f"ocr-{len(found)+1:03d}", "text": text, "timeMs": time_ms, "modality": "OCR"})
+    return found[:150]
 
 
 def run_ocr(frames: list[np.ndarray]) -> list[str]:
@@ -403,7 +444,8 @@ def analyze_video_file(
             model=os.getenv("WHISPER_MODEL", "base"),
             input_summary={"hasSeparateAudio": audio_path is not None},
         ) as step:
-            transcript = transcribe_video(transcript_source)
+            transcript_segments = transcribe_segments(transcript_source)
+            transcript = " ".join(item["text"] for item in transcript_segments)
             step.set_output({
                 "characters": len(transcript),
                 "hasTranscript": bool(transcript),
@@ -413,6 +455,7 @@ def analyze_video_file(
         # results, so lack of a decodable audio track is not fatal.
         print(f"[AUDIO] 음성 분석 실패 - 화면 분석만 진행: {exc}")
         transcript = ""
+        transcript_segments = []
 
     with pipeline_step(
         "frame-sampling",
@@ -427,7 +470,12 @@ def analyze_video_file(
         model="easyocr-ko-en",
         input_summary={"frameCount": len(frames)},
     ) as step:
-        ocr_lines = run_ocr(frames)
+        timed_ocr = run_timed_ocr(sample_ocr_frames(
+            video_path,
+            interval_seconds=float(os.getenv("OCR_INTERVAL_SECONDS", "2")),
+            max_frames=int(os.getenv("OCR_MAX_FRAMES", "60")),
+        ))
+        ocr_lines = [item["text"] for item in timed_ocr]
         step.set_output({"lineCount": len(ocr_lines)})
 
     with pipeline_step(
@@ -518,6 +566,7 @@ def analyze_video_file(
             result = postprocess_with_llm(
                 transcript=transcript,
                 ocr_lines=ocr_lines,
+                evidence_units=transcript_segments + timed_ocr,
                 # The current CLIP classifier is restricted to a small fixed
                 # label set. Keep it as a last-resort signal rather than
                 # contaminating otherwise useful STT/OCR evidence.
@@ -561,6 +610,13 @@ def analyze_video_file(
             f"- fallback 사용: {exc}"
         )
         result = fallback_result
+        result["summary"] = "AI 요약을 생성하지 못했습니다. 원본 영상을 확인하거나 다시 분석해 주세요."
+        result["entities"] = []
+        result["structured"]["entityDetails"] = []
+        result["structured"]["analysisQuality"] = "FALLBACK"
+
+    result["structured"]["ocrEvidence"] = timed_ocr
+    result["structured"]["videoEvidence"] = transcript_segments + timed_ocr
 
     result["structured"] = verify_structured_claims(
         result.get("structured", {})

@@ -13,6 +13,8 @@ export type ContentItem = {
 
   summary: string;
 
+  videoBasedSummary?: boolean;
+
   sourceUrl?: string;
 
   category: string[];

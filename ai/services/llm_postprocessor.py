@@ -45,7 +45,7 @@ def create_gemini_client() -> genai.Client:
     )
 
 MAX_TRANSCRIPT_CHARS = 3500
-MAX_OCR_LINES = 20
+MAX_OCR_LINES = 100
 MAX_OCR_LINE_LENGTH = 80
 MAX_VISION_LABELS = 5
 
@@ -328,6 +328,7 @@ def _normalize_claims(value) -> list[dict]:
 
 def _normalize_result(
     result: dict,
+    evidence_units: list[dict] | None = None,
 ) -> dict:
     title = str(
         result.get("title", "")
@@ -398,9 +399,54 @@ def _normalize_result(
     if not summary:
         summary = "영상의 핵심 내용을 분석했습니다."
 
+    evidence_by_id = {str(unit.get("id")): unit for unit in (evidence_units or []) if unit.get("id")}
+
+    def normalize_grounded(value):
+        if not isinstance(value, dict):
+            return None
+        text = " ".join(str(value.get("text", "")).split()).strip()[:300]
+        refs = value.get("evidenceIds", [])
+        if not isinstance(refs, list):
+            return None
+        refs = list(dict.fromkeys(ref for ref in refs if isinstance(ref, str) and ref in evidence_by_id))
+        if not text or not refs:
+            return None
+        return {"text": text, "evidenceIds": refs, "evidenceStatus": "VIDEO_ATTRIBUTED_UNVERIFIED"}
+
+    targets = []
+    for target in result.get("targets", []) if isinstance(result.get("targets"), list) else []:
+        if not isinstance(target, dict):
+            continue
+        grounded_name = normalize_grounded({"text": target.get("name"), "evidenceIds": target.get("nameEvidenceIds")})
+        if not grounded_name:
+            continue
+        def grounded_list(key):
+            values = target.get(key, [])
+            if not isinstance(values, list):
+                return []
+            return [item for raw in values if (item := normalize_grounded(raw))][:20]
+        targets.append({"name": grounded_name["text"], "nameEvidenceIds": grounded_name["evidenceIds"], "type": str(target.get("type", "OTHER"))[:40], "details": grounded_list("details"), "steps": grounded_list("steps"), "verificationStatus": "NOT_VERIFIED"})
+    global_steps = [item for raw in result.get("globalSteps", []) if (item := normalize_grounded(raw))][:30] if isinstance(result.get("globalSteps"), list) else []
+
+    # Keep the summary compact; evidence/verification status remains available
+    # separately so clients can label these as video claims, not proven facts.
+    if targets:
+        lines = []
+        for target in targets:
+            if lines:
+                lines.append("")
+            lines.append(target['name'])
+            lines.extend(f"- {detail['text']}" for detail in target["details"])
+            lines.extend(f"- {step['text']}" for step in target["steps"])
+        summary = "\n".join(lines)
+    elif global_steps:
+        summary = "\n".join(f"{i}. {step['text']}" for i, step in enumerate(global_steps, 1))
+    else:
+        summary = "영상에서 확인할 수 있는 항목별 근거가 부족합니다. 원본을 확인해 주세요."
+
     return {
         "title": title[:60],
-        "summary": summary[:500],
+        "summary": summary[:4000],
         "categories": categories,
         "keywords": keywords,
         "entities": entities,
@@ -411,6 +457,8 @@ def _normalize_result(
             "contentType": content_type,
             "entityDetails": entity_details,
             "claims": claims,
+            "targets": targets,
+            "globalSteps": global_steps,
             "factChecks": [],
         },
     }
@@ -421,6 +469,7 @@ def postprocess_with_llm(
     ocr_lines: list[str],
     vision_labels: list[str],
     *,
+    evidence_units: list[dict] | None = None,
     source_title: str = "",
     source_description: str = "",
     source_channel: str = "",
@@ -444,8 +493,7 @@ def postprocess_with_llm(
 
     input_data = {
         "primary_evidence": {
-            "speech_transcript": clean_transcript,
-            "screen_text_ocr": clean_ocr,
+            "units": (evidence_units or [])[:200],
         },
         "supporting_evidence": {
             "source_title": _clean_transcript(source_title)[:300],
@@ -546,6 +594,22 @@ IMPORTANT RULES:
 
 17. Return JSON only.
 
+18. Extract target-specific items and ordered steps. Do not attach one item's
+    details to another. Distinguish video claims from verified facts. Format
+    summary as concise Korean bullets with specific names, details and steps.
+    Do not add unsupported prices, medical claims, or instructions.
+    Only include steps explicitly stated in the transcript or screen text;
+    if steps are not explicitly provided, return an empty steps array.
+    Visual labels do not reveal specific actions. Describe product benefits,
+    health claims and prices as claims from the video, not verified facts.
+    In target details and steps, write concise useful information without
+    repetitive narration such as "영상에서 소개" or "이 영상은 설명합니다".
+
+19. For each target name provide nameEvidenceIds. Every detail and step must
+    be an object with text and evidenceIds citing exact input unit IDs.
+    Every global step must also cite unit IDs. Never invent IDs. If no input
+    unit explicitly supports an item, omit it. Treat OCR/STT as fallible.
+
 INPUT DATA:
 
 {json.dumps(input_data, ensure_ascii=False, indent=2)}
@@ -558,7 +622,7 @@ INPUT DATA:
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.2,
-            max_output_tokens=700,
+            max_output_tokens=int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "4096")),
             response_mime_type="application/json",
             response_schema={
                 "type": "object",
@@ -605,6 +669,17 @@ INPUT DATA:
                         "type": "string",
                         "enum": ALLOWED_CONTENT_TYPES,
                     },
+                    "targets": {
+                        "type": "array", "maxItems": 10,
+                        "items": {"type": "object", "properties": {
+                            "name": {"type": "string"},
+                            "type": {"type": "string"},
+                            "nameEvidenceIds": {"type": "array", "items": {"type": "string"}},
+                            "details": {"type": "array", "items": {"type": "object", "properties": {"text": {"type": "string"}, "evidenceIds": {"type": "array", "items": {"type": "string"}}}, "required": ["text", "evidenceIds"]}},
+                            "steps": {"type": "array", "items": {"type": "object", "properties": {"text": {"type": "string"}, "evidenceIds": {"type": "array", "items": {"type": "string"}}}, "required": ["text", "evidenceIds"]}}
+                        }, "required": ["name", "nameEvidenceIds", "type", "details", "steps"]}
+                    },
+                    "globalSteps": {"type": "array", "items": {"type": "object", "properties": {"text": {"type": "string"}, "evidenceIds": {"type": "array", "items": {"type": "string"}}}, "required": ["text", "evidenceIds"]}},
                     "entityDetails": {
                         "type": "array",
                         "maxItems": 12,
@@ -658,6 +733,8 @@ INPUT DATA:
                     "contentType",
                     "entityDetails",
                     "claims",
+                    "targets",
+                    "globalSteps",
                 ],
             },
         ),
@@ -678,7 +755,7 @@ INPUT DATA:
         ) from exc
 
     result = _normalize_result(
-        parsed
+        parsed, evidence_units
     )
 
     print("[LLM] Gemini 후처리 완료")
