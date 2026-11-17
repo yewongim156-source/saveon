@@ -37,9 +37,13 @@ waits until analysis finishes.
 | `YOUTUBE_MAX_FILE_SIZE_MB` | `150` | Maximum downloaded media size |
 | `WHISPER_MODEL` | `base` | faster-whisper model name |
 | `CLIP_MODEL` | `openai/clip-vit-base-patch32` | Transformers CLIP model |
+| `SAVEON_MODEL_CACHE_DIR` | `saveon/.runtime/model-cache` | Local cache for Whisper, EasyOCR, and CLIP model files |
 | `GEMINI_API_KEY` | none | Gemini structuring, embedding, and grounding |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Structured content analysis model |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Semantic-search embedding model |
 | `GEMINI_EMBEDDING_DIMENSIONS` | `768` | Must match the pgvector column |
+| `GEMINI_REQUEST_TIMEOUT_MS` | `30000` | Per-request Gemini SDK timeout in milliseconds |
+| `GEMINI_RETRY_ATTEMPTS` | `3` | Attempts for transient Gemini 5xx failures; quota errors are not retried |
 | `FACT_CHECK_ENABLED` | `false` | Enable search-grounded claim verification |
 | `GEMINI_VERIFIED_SUMMARY_MODEL` | `GEMINI_MODEL` | Rewrites the final summary from fact-check evidence |
 | `MAX_FACT_CHECK_CLAIMS` | `3` | Maximum claims verified per content |

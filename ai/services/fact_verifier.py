@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import os
 
-from google import genai
 from google.genai import types
 
-from services.llm_postprocessor import GEMINI_API_KEY, GEMINI_MODEL
+from services.llm_postprocessor import (
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    create_gemini_client,
+)
 from services.telemetry import pipeline_step
 
 
@@ -72,7 +75,7 @@ def _verify_claim(claim: dict) -> dict:
     claim_text = str(claim.get("text", "")).strip()
     search_query = str(claim.get("searchQuery", "")).strip()
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client = create_gemini_client()
     grounding_tool = types.Tool(
         google_search=types.GoogleSearch()
     )

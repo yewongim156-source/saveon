@@ -103,7 +103,7 @@ class YouTubeDownloadTests(unittest.TestCase):
                             info["id"],
                         ).replace("%(ext)s", "mp4")
                     )
-                    output.write_bytes(b"fake-video")
+                    output.write_bytes(b"fake-video" * 200)
                     info["requested_downloads"] = [
                         {"filepath": str(output)}
                     ]

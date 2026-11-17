@@ -44,6 +44,8 @@ def create_gemini_client() -> genai.Client:
                 max_delay=2.0,
                 exp_base=2.0,
                 jitter=0.1,
+                # Quota exhaustion (429) needs a quota or billing change,
+                # not repeated requests. Retry only transient server errors.
                 http_status_codes=[500, 502, 503, 504],
             ),
         ),
@@ -603,15 +605,19 @@ def postprocess_with_llm(
     ).strip()
 
     input_data = {
-        "source_metadata": {
-            "title": clean_source_title,
-            "description": clean_source_description,
-            "channel": clean_source_channel,
+        "primary_evidence": {
+            "speech_transcript": clean_transcript,
+            "screen_text_ocr": clean_ocr,
+            "review_excerpts": (review_excerpts or [])[:9],
         },
-        "transcript": clean_transcript,
-        "review_excerpts": (review_excerpts or [])[:9],
-        "ocr": clean_ocr,
-        "vision_labels": clean_vision,
+        "supporting_evidence": {
+            "source_title": clean_source_title[:300],
+            "source_channel": clean_source_channel[:120],
+        },
+        "weak_evidence": {
+            "source_description": clean_source_description[:1200],
+            "zero_shot_visual_labels": clean_vision,
+        },
     }
 
     prompt = f"""
@@ -638,6 +644,18 @@ IMPORTANT RULES:
 
 3. Do not invent brands, products, places, people, prices, specifications, or other facts
    that are not supported by the provided data.
+
+3a. Evidence priority is primary_evidence, then supporting_evidence,
+    then weak_evidence. A platform description can be stale, promotional,
+    or unrelated to the actual clip. Zero-shot visual labels are coarse.
+    Never let weak evidence override a clear speech transcript or OCR.
+
+    When primary_evidence contains meaningful content, ignore conflicting
+    weak evidence completely, including secondary categories and tags.
+
+3b. If the evidence sources conflict, describe the topic supported by the
+    speech transcript and OCR. Omit the conflicting weak evidence instead
+    of combining unrelated topics.
 
 4. The title must describe the actual main topic naturally in Korean.
    Never return generic source titles such as "Video by username", "Reel by username",

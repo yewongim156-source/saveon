@@ -290,10 +290,13 @@ def build_categories(
         ):
             categories.append(category)
 
-    for label in vision_labels:
-        category = VISION_TO_CATEGORY.get(label)
-        if category and category not in categories:
-            categories.append(category)
+    # CLIP uses a small fixed label set and can force an unrelated category.
+    # Treat it as a last-resort signal only when text evidence is unavailable.
+    if not transcript.strip() and not ocr_lines:
+        for label in vision_labels:
+            category = VISION_TO_CATEGORY.get(label)
+            if category and category not in categories:
+                categories.append(category)
 
     if not categories:
         categories.append("영상")
@@ -321,10 +324,11 @@ def extract_keywords(
     counts = Counter(normalized)
     keywords = [word for word, _ in counts.most_common(8)]
 
-    for label in vision_labels:
-        translated = VISION_TO_CATEGORY.get(label, label)
-        if translated not in keywords:
-            keywords.append(translated)
+    if not transcript.strip() and not ocr_lines:
+        for label in vision_labels:
+            translated = VISION_TO_CATEGORY.get(label, label)
+            if translated not in keywords:
+                keywords.append(translated)
 
     return keywords[:10]
 
@@ -406,6 +410,26 @@ def build_summary(
     source_description: str = "",
     source_channel: str = "",
 ) -> str:
+
+    # SAVEON_MERGE_PRIMARY_EVIDENCE
+    # 영상 내용이 있으면 외부 설명보다 우선한다.
+    if transcript and transcript.strip():
+        cleaned = " ".join(transcript.split())
+        return ("영상에서 " + cleaned[:420])[:500]
+
+    if ocr_lines:
+        readable = [
+            str(value).strip()
+            for value in ocr_lines[:4]
+            if str(value).strip()
+        ]
+        if readable:
+            return (
+                "영상 화면에서 "
+                + ", ".join(readable)
+                + " 관련 내용을 확인했어요."
+            )[:500]
+
     cleaned_description = " ".join(
         source_description.split()
     ).strip()
@@ -435,7 +459,7 @@ def build_summary(
                 + " 관련 내용을 확인했어요."
             )[:500]
 
-    if vision_labels:
+    if vision_labels and not transcript and not ocr_lines:
         readable = [
             VISION_TO_CATEGORY.get(label, label)
             for label in vision_labels
@@ -523,7 +547,7 @@ def analyze_video_file(
         vision_labels = run_vision(frames)
         step.set_output({"labels": vision_labels})
 
-    # SAVEON_VIDEO_OBSERVATIONS_V8: retain provenance from the *original* inputs.
+    # SAVEON_VIDEO_OBSERVATIONS_V8: retain provenance from original inputs.
     observations = extract_video_observations(
         transcript=transcript,
         ocr_lines=ocr_lines,
@@ -531,9 +555,9 @@ def analyze_video_file(
         source_description=source_description,
     )
 
-    source_text = " ".join(
-        [source_title, source_description[:1000]]
-    ).strip()
+    # A source title can help classification; a promotional description
+    # must not override evidence from the actual video.
+    source_text = source_title.strip()
 
     categories = build_categories(
         transcript,
@@ -603,7 +627,12 @@ def analyze_video_file(
             result = postprocess_with_llm(
                 transcript=transcript,
                 ocr_lines=ocr_lines,
-                vision_labels=vision_labels,
+                # CLIP labels are coarse; only use them without STT/OCR.
+                vision_labels=(
+                    vision_labels
+                    if not transcript and not ocr_lines
+                    else []
+                ),
                 source_title=source_title,
                 source_description=source_description,
                 source_channel=source_channel,

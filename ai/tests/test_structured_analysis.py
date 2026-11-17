@@ -8,9 +8,33 @@ from services.verified_summary import (
     _verification_status,
     apply_verified_summary,
 )
+from services.video_pipeline import build_categories, build_summary
 
 
 class StructuredAnalysisTests(unittest.TestCase):
+    def test_fallback_does_not_mix_clip_labels_into_transcript_topic(self):
+        categories = build_categories(
+            "We are standing next to the elephants at the zoo.",
+            [],
+            ["fashion", "food", "travel"],
+            "Me at the zoo",
+        )
+
+        self.assertEqual(categories, ["영상"])
+
+    def test_fallback_ignores_description_when_transcript_exists(self):
+        summary = build_summary(
+            "코끼리 앞에서 짧게 설명하는 영상입니다.",
+            [],
+            ["fashion", "food"],
+            "뇌 속 미세플라스틱에 관한 무관한 홍보 문구",
+            "jawed",
+        )
+
+        self.assertIn("코끼리", summary)
+        self.assertNotIn("미세플라스틱", summary)
+        self.assertNotIn("화면 유형", summary)
+
     def test_normalizes_structured_metadata(self):
         result = _normalize_result({
             "title": "성수 카페",

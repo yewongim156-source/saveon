@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import os
 
-from google import genai
 from google.genai import types
 
 from services.fact_verifier import FACT_CHECK_ENABLED
-from services.llm_postprocessor import GEMINI_API_KEY, GEMINI_MODEL
+from services.llm_postprocessor import (
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    create_gemini_client,
+)
 from services.telemetry import pipeline_step
 
 
@@ -88,7 +91,7 @@ def _generate_verified_summary(
     raw_summary: str,
     structured: dict,
 ) -> dict:
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client = create_gemini_client()
     fact_checks = _compact_fact_checks(structured)
 
     prompt = f"""

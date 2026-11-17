@@ -45,6 +45,9 @@ developer-api/*.db
 # Local backup files
 *.backup-*
 
+# Project-local runtime binaries and databases
+.runtime/
+
 # VS Code local settings
 .vscode/
 
