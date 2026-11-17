@@ -25,6 +25,7 @@ import AnalysisProgress from './src/components/ui/AnalysisProgress';
 import { theme } from './src/theme';
 import { isSaveLinkValid, saveLinkIdentity, saveLinkPlatform } from './src/lib/saveLinkUx';
 import DetailSummaryText from './src/components/ui/DetailSummaryText';
+import DetailTitleDisclosure from './src/components/ui/DetailTitleDisclosure';
 import LibraryFindBar from './src/components/ui/LibraryFindBar';
 // SAVEON_LIBRARY_UX_V1
 import BrandGradient from './src/components/ui/BrandGradient';
@@ -114,7 +115,7 @@ function toContentItem(api: ApiContent): ContentItem {
 
   const fallbackSummary =
     api.status === 'FAILED'
-      ? '원본 영상를 불러오지 못했어요. 다시 시도할 수 있어요.'
+      ? '원본 영상을 불러오지 못했어요. 다시 시도할 수 있어요.'
       : '저장은 끝났어요. 앱을 나가도 정리는 계속 진행돼요.';
 
   return {
@@ -2613,7 +2614,7 @@ export default function App() {
       });
 
     return (
-      <ScrollView contentContainerStyle={styles.page}>
+      <ScrollView contentContainerStyle={styles.page} keyboardDismissMode="on-drag">
         <Text style={styles.eyebrow}>SAVE:ON</Text>
         <Text style={styles.h1}>내 저장물</Text>
 
@@ -3029,7 +3030,7 @@ export default function App() {
       <ScrollView
         contentContainerStyle={styles.page}
         keyboardShouldPersistTaps="handled"
-      >
+       keyboardDismissMode="on-drag">
         <Text style={styles.eyebrow}>
           SAVE:ON
         </Text>
@@ -3815,11 +3816,16 @@ export default function App() {
       ) ||
       evidenceReviewMessages.length > 0;
 
+    // SAVEON_FINAL_UX_NAV_V1: back label reflects the actual preserved view.
     const backLabel =
       detailReturnTab === 'home'
         ? '홈'
         : detailReturnTab === 'search'
-          ? '검색'
+          ? activeSmartCollection
+            ? collectionComparison ? '비교 결과' : '영상 모음'
+            : connectionFilter
+              ? '관련 저장물'
+              : '검색'
           : '내 저장물';
 
     return (
@@ -3827,6 +3833,8 @@ export default function App() {
         <Pressable
           style={styles.backButton}
           onPress={() => setScreen({ name: detailReturnTab })}
+          accessibilityRole="button"
+          accessibilityLabel={`${backLabel} 화면으로 돌아가기`}
         >
           <Ionicons
             name="chevron-back"
@@ -3847,9 +3855,12 @@ export default function App() {
             </Text>
           </View>
 
-          <Text style={styles.detailTitle}>
-            {detailItem.title}
-          </Text>
+          <DetailTitleDisclosure
+            key={detailItem.id}
+            title={detailItem.title}
+            titleStyle={styles.detailTitle}
+            maxLines={3}
+          />
 
           {canOpenSource && (
             <Pressable
