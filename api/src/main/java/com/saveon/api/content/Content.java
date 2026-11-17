@@ -41,6 +41,12 @@ public class Content {
     @Column(name = "structured_analysis", columnDefinition = "TEXT")
     private String structuredAnalysis;
 
+    @Column(name = "user_edited", nullable = false)
+    private boolean userEdited = false;
+
+    @Column(name = "edited_at")
+    private LocalDateTime editedAt;
+
     @Column(name = "embedding_model")
     private String embeddingModel;
 
@@ -52,6 +58,13 @@ public class Content {
     @Column(columnDefinition = "vector(768)")
     private float[] embedding;
 
+
+    // Explicit per-Reel opt-in: never silently cache other creators' frames.
+    @Column(name = "thumbnail_allowed")
+    private Boolean thumbnailAllowed = Boolean.FALSE;
+
+    @Column(name = "thumbnail_object_key", length = 250)
+    private String thumbnailObjectKey;
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(
@@ -108,22 +121,99 @@ public class Content {
             List<String> entities,
             String structuredAnalysis
     ) {
+        replaceAnalysisData(
+                title,
+                summary,
+                categories,
+                keywords,
+                entities,
+                structuredAnalysis
+        );
+
+        this.userEdited = false;
+        this.editedAt = null;
+        this.status = ContentStatus.COMPLETED;
+        this.analyzedAt = LocalDateTime.now();
+    }
+
+
+    public void applyUserCorrection(
+            String title,
+            String summary,
+            List<String> categories,
+            List<String> keywords,
+            List<String> entities,
+            String structuredAnalysis
+    ) {
+        replaceAnalysisData(
+                title,
+                summary,
+                categories,
+                keywords,
+                entities,
+                structuredAnalysis
+        );
+
+        this.userEdited = true;
+        this.editedAt = LocalDateTime.now();
+    }
+
+
+    public void applySystemCorrection(
+            String title,
+            String summary,
+            List<String> categories,
+            List<String> keywords,
+            List<String> entities,
+            String structuredAnalysis
+    ) {
+        replaceAnalysisData(
+                title,
+                summary,
+                categories,
+                keywords,
+                entities,
+                structuredAnalysis
+        );
+    }
+
+
+    private void replaceAnalysisData(
+            String title,
+            String summary,
+            List<String> categories,
+            List<String> keywords,
+            List<String> entities,
+            String structuredAnalysis
+    ) {
+        List<String> categoryCopy =
+                categories != null
+                        ? new ArrayList<>(categories)
+                        : List.of();
+
+        List<String> keywordCopy =
+                keywords != null
+                        ? new ArrayList<>(keywords)
+                        : List.of();
+
+        List<String> entityCopy =
+                entities != null
+                        ? new ArrayList<>(entities)
+                        : List.of();
+
         this.title = title;
         this.summary = summary;
 
         this.categories.clear();
-        this.categories.addAll(categories);
+        this.categories.addAll(categoryCopy);
 
         this.keywords.clear();
-        this.keywords.addAll(keywords);
+        this.keywords.addAll(keywordCopy);
 
         this.entities.clear();
-        this.entities.addAll(entities);
+        this.entities.addAll(entityCopy);
 
         this.structuredAnalysis = structuredAnalysis;
-
-        this.status = ContentStatus.COMPLETED;
-        this.analyzedAt = LocalDateTime.now();
     }
 
 
@@ -143,6 +233,26 @@ public class Content {
         this.embeddingText = embeddingText;
     }
 
+
+    public void setThumbnailAllowed(boolean permitted) {
+        this.thumbnailAllowed = permitted;
+    }
+
+    public boolean isThumbnailAllowed() {
+        return Boolean.TRUE.equals(thumbnailAllowed);
+    }
+
+    public void setThumbnailObjectKey(String key) {
+        this.thumbnailObjectKey = key;
+    }
+
+    public String storedThumbnailKey() {
+        return thumbnailObjectKey;
+    }
+
+    public boolean isThumbnailAvailable() {
+        return thumbnailObjectKey != null && !thumbnailObjectKey.isBlank();
+    }
 
     public Long getId() {
         return id;
@@ -180,6 +290,14 @@ public class Content {
         return structuredAnalysis;
     }
 
+    public boolean isUserEdited() {
+        return userEdited;
+    }
+
+    public LocalDateTime getEditedAt() {
+        return editedAt;
+    }
+
     public List<String> getCategories() {
         return categories;
     }
@@ -192,3 +310,4 @@ public class Content {
         return entities;
     }
 }
+// SAVEON_INSTAGRAM_THUMBNAIL_V1

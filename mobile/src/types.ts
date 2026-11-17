@@ -23,16 +23,20 @@ export type ContentItem = {
 
   entities: string[];
 
+  /** Original API status, not a guess based on categories. */
+  analysisStatus?: 'PENDING' | 'ANALYZING' | 'COMPLETED' | 'FAILED';
   savedAt: string;
 
   thumbnailEmoji: string;
+  thumbnailAvailable?: boolean;
 };
 
 export type TabScreenName =
   | 'home'
   | 'save'
   | 'library'
-  | 'search';
+  | 'search'
+  | 'more';
 
 export type Screen =
   | {
@@ -42,3 +46,4 @@ export type Screen =
       name: 'detail';
       itemId: string;
     };
+// SAVEON_INSTAGRAM_THUMBNAIL_V1

@@ -63,4 +63,3 @@ GEMINI_API_KEY=your_key_here
 로그는 `.runtime/logs/`에서 확인한다. AI 파이프라인 단계별 기록은
 Developer API의 `/admin/overview`, `/admin/traces`,
 `/admin/traces/{traceId}`에서 조회한다.
-

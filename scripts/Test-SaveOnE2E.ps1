@@ -55,4 +55,3 @@ if ($content.status -ne "COMPLETED") {
 
 $content | ConvertTo-Json -Depth 20
 Write-Host "[ok] YouTube URL -> analysis -> PostgreSQL E2E completed."
-

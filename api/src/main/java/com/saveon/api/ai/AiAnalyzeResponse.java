@@ -11,8 +11,16 @@ public record AiAnalyzeResponse(
         List<String> categories,
         List<String> keywords,
         List<String> entities,
-        Map<String, Object> structured
+        Map<String, Object> structured,
+        String thumbnailBase64
 ) {
+    // Existing six-argument Java callers remain valid.
+    public AiAnalyzeResponse(String title, String summary,
+            List<String> categories, List<String> keywords,
+            List<String> entities, Map<String, Object> structured) {
+        this(title, summary, categories, keywords, entities, structured, null);
+    }
+
     public String structuredJson() {
         try {
             return JsonMapper.builder()
@@ -41,3 +49,4 @@ public record AiAnalyzeResponse(
         ).trim();
     }
 }
+// SAVEON_INSTAGRAM_THUMBNAIL_V1

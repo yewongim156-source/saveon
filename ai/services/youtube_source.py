@@ -7,8 +7,12 @@ import re
 from urllib.parse import urlsplit
 
 
-DEFAULT_MAX_DURATION_SECONDS = 10 * 60
+# YouTube reviews are often a little longer than Shorts/Reels. Save:on still
+# rejects very long videos by default, but the test/review use case can now
+# handle videos up to 20 minutes. Override with YOUTUBE_MAX_DURATION_SECONDS.
+DEFAULT_MAX_DURATION_SECONDS = 20 * 60
 DEFAULT_MAX_FILE_SIZE_MB = 150
+MIN_DOWNLOADED_FILE_BYTES = 1024
 
 
 class YouTubeSourceError(RuntimeError):
@@ -43,7 +47,6 @@ def is_youtube_url(url: str) -> bool:
 
     if parsed.scheme not in {"http", "https"}:
         return False
-
     if parsed.username or parsed.password:
         return False
 
@@ -94,9 +97,12 @@ def _validate_metadata(info: dict) -> None:
         "YOUTUBE_MAX_DURATION_SECONDS",
         DEFAULT_MAX_DURATION_SECONDS,
     )
+
     if isinstance(duration, (int, float)) and duration > max_duration:
+        minutes = max_duration // 60
         raise InvalidYouTubeUrlError(
-            f"{max_duration}초 이하 영상만 분석할 수 있습니다."
+            f"현재는 {minutes}분 이하 YouTube 영상만 분석할 수 있습니다. "
+            "필요하면 YOUTUBE_MAX_DURATION_SECONDS 환경 변수로 조정할 수 있어요."
         )
 
 
@@ -104,6 +110,17 @@ def _safe_video_id(info: dict) -> str:
     raw_id = str(info.get("id") or "video")
     cleaned = re.sub(r"[^A-Za-z0-9_-]", "", raw_id)
     return cleaned or "video"
+
+
+def _valid_media_file(candidate: Path) -> bool:
+    try:
+        return (
+            candidate.is_file()
+            and candidate.suffix not in {".part", ".ytdl"}
+            and candidate.stat().st_size >= MIN_DOWNLOADED_FILE_BYTES
+        )
+    except OSError:
+        return False
 
 
 def _find_downloaded_path(
@@ -125,14 +142,17 @@ def _find_downloaded_path(
     candidates.extend(output_dir.glob(f"{filename_prefix}.*"))
 
     for candidate in candidates:
-        if (
-            candidate.is_file()
-            and candidate.suffix not in {".part", ".ytdl"}
-        ):
+        if _valid_media_file(candidate):
             return candidate
 
+    existing = [
+        f"{item.name}:{item.stat().st_size}"
+        for item in output_dir.glob("*")
+        if item.is_file()
+    ]
     raise YouTubeDownloadError(
-        "다운로드는 완료됐지만 분석할 영상 파일을 찾지 못했습니다."
+        "다운로드 후 유효한 영상 파일을 찾지 못했습니다. "
+        f"temp files={existing[:8]}"
     )
 
 
@@ -144,8 +164,6 @@ def _has_stream(
 ) -> bool:
     formats = metadata.get("formats")
     if not isinstance(formats, list):
-        # Some extractors and test doubles omit the format list. Let yt-dlp
-        # resolve the requested fallback expression in that case.
         return True
 
     for item in formats:
@@ -177,6 +195,7 @@ def _download_stream(
         "overwrites": True,
         "restrictfilenames": True,
     }
+
     with YoutubeDL(options) as downloader:
         info = downloader.extract_info(url, download=True)
         if not isinstance(info, dict):
@@ -188,26 +207,24 @@ def _download_stream(
     filename_prefix = (
         f"youtube-{_safe_video_id(info)}-{filename_suffix}"
     )
-    return (
-        _find_downloaded_path(
-            output_dir,
-            info,
-            prepared_filename,
-            filename_prefix,
-        ),
+    path = _find_downloaded_path(
+        output_dir,
         info,
+        prepared_filename,
+        filename_prefix,
     )
+
+    print(
+        "[YOUTUBE] stream ready: "
+        f"{path.name} / {path.stat().st_size} bytes"
+    )
+    return path, info
 
 
 def download_youtube_video(
     url: str,
     output_dir: Path,
 ) -> YouTubeMedia:
-    """Download one public YouTube video into a caller-owned temp directory.
-
-    The caller is responsible for deleting ``output_dir``. Save:On uses a
-    TemporaryDirectory so the media is removed immediately after analysis.
-    """
     normalized_url = url.strip()
     if not is_youtube_url(normalized_url):
         raise InvalidYouTubeUrlError(
@@ -240,8 +257,6 @@ def download_youtube_video(
     }
 
     try:
-        # Inspect before downloading so long videos and live streams are
-        # rejected without transferring the media file.
         with YoutubeDL(common_options) as metadata_loader:
             metadata = metadata_loader.extract_info(
                 normalized_url,
@@ -253,6 +268,12 @@ def download_youtube_video(
                 "YouTube 영상 정보를 확인할 수 없습니다."
             )
         _validate_metadata(metadata)
+
+        duration = metadata.get("duration")
+        print(
+            "[YOUTUBE] metadata ok: "
+            f"id={_safe_video_id(metadata)} duration={duration}s"
+        )
 
         audio_path: Path | None = None
 
@@ -275,9 +296,6 @@ def download_youtube_video(
             )
             audio_path = video_path
         else:
-            # Modern YouTube responses frequently expose video and audio as
-            # separate streams. Download both without merging so ffmpeg is not
-            # required; Whisper can read the audio file independently.
             video_path, downloaded = _download_stream(
                 YoutubeDL,
                 common_options,
@@ -312,6 +330,17 @@ def download_youtube_video(
                         f"화면 분석만 진행: {exc}"
                     )
 
+        if not _valid_media_file(video_path):
+            raise YouTubeDownloadError(
+                "YouTube 영상 파일이 비어 있거나 유효하지 않습니다."
+            )
+
+        if audio_path is not None and not _valid_media_file(audio_path):
+            print(
+                "[YOUTUBE] 오디오 파일이 비어 있어 영상 파일로 STT를 시도합니다."
+            )
+            audio_path = video_path
+
         total_size = video_path.stat().st_size
         if audio_path is not None and audio_path != video_path:
             total_size += audio_path.stat().st_size
@@ -328,8 +357,9 @@ def download_youtube_video(
         raise
     except DownloadError as exc:
         raise YouTubeDownloadError(
-            "공개 상태와 재생 가능 여부를 확인해 주세요. "
-            "연령 제한·로그인 필요·지역 제한 영상은 분석할 수 없습니다."
+            "YouTube 다운로드에 실패했습니다. "
+            "공개 상태·연령 제한·로그인 필요·지역 제한 여부를 확인해 주세요. "
+            f"원인: {exc}"
         ) from exc
     except YouTubeSourceError:
         raise

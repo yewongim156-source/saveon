@@ -35,4 +35,3 @@ if (Test-Path $pgCtl) {
 }
 
 Write-Host "Save:On local E2E environment is stopped."
-

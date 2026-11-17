@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from services.embedding_service import embed_text
 from services.video_pipeline import analyze_video_file
 from services.telemetry import pipeline_step, trace_session
+from services.analysis_progress import progress_scope, get_progress
 from services.instagram_source import (
     InstagramDownloadError,
     InvalidInstagramUrlError,
@@ -36,6 +37,7 @@ app = FastAPI(
 
 class AnalyzeRequest(BaseModel):
     sourceUrl: str
+    thumbnailRequested: bool = False  # rights confirmed by the user
 
 
 class AnalyzeResponse(BaseModel):
@@ -45,6 +47,7 @@ class AnalyzeResponse(BaseModel):
     keywords: list[str]
     entities: list[str]
     structured: dict = Field(default_factory=dict)
+    thumbnailBase64: str | None = None  # optional 384px JPEG only for opted-in Reels
 
 
 class EmbedRequest(BaseModel):
@@ -93,8 +96,16 @@ def create_embedding(request: EmbedRequest):
             ) from exc
 
 
+@app.get("/progress/{content_id}")
+def get_live_analysis_progress(content_id: int):
+    return get_progress(content_id)
+
+
 @app.post("/analyze", response_model=AnalyzeResponse)
-def analyze_url(request: AnalyzeRequest):
+def analyze_url(
+    request: AnalyzeRequest,
+    x_saveon_content_id: str | None = Header(default=None),
+):
     source_url = request.sourceUrl.strip()
     platform = (
         "INSTAGRAM"
@@ -104,14 +115,16 @@ def analyze_url(request: AnalyzeRequest):
         else "WEB"
     )
 
-    with trace_session(
-        platform=platform,
-        source_url=source_url,
-    ):
-        return _analyze_source_url(source_url)
+    # save:on TRUE_PROGRESS_V1: request id propagated from Spring for live stages.
+    with progress_scope(x_saveon_content_id):
+        with trace_session(
+            platform=platform,
+            source_url=source_url,
+        ):
+            return _analyze_source_url(source_url, thumbnail_requested=request.thumbnailRequested)
 
 
-def _analyze_source_url(source_url: str):
+def _analyze_source_url(source_url: str, *, thumbnail_requested: bool = False):
     url = source_url.lower()
 
     if is_instagram_reel_url(source_url):
@@ -139,6 +152,7 @@ def _analyze_source_url(source_url: str):
                     source_title=media.title,
                     source_description=media.description,
                     source_channel=media.channel,
+                    thumbnail_requested=thumbnail_requested,
                 )
 
                 return AnalyzeResponse(**result)
@@ -290,3 +304,6 @@ async def analyze_video_raw(
                     status_code=500,
                     detail=f"영상 분석 실패: {exc}",
                 ) from exc
+
+# save:on TRUE_PROGRESS_V1
+# SAVEON_INSTAGRAM_THUMBNAIL_V1
