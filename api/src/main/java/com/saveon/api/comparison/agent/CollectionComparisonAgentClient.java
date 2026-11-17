@@ -2,6 +2,8 @@ package com.saveon.api.comparison.agent;
 
 import com.saveon.api.comparison.dto.CollectionComparisonResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -80,6 +82,17 @@ public class CollectionComparisonAgentClient {
                 }
             }
 
+            // The Q&A Agent can wrap Gemini 429 quota errors in HTTP 500.
+            // Propagate a sanitized 429, not an opaque 500 or the vendor response.
+            if (status == 429 || ((status == 500 || status == 503)
+                    && (responseBody.contains("RESOURCE_EXHAUSTED")
+                        || responseBody.contains("Quota exceeded")))) {
+                throw new ResponseStatusException(
+                        HttpStatus.TOO_MANY_REQUESTS,
+                        "AI 비교 요청이 많아 잠시 사용할 수 없습니다."
+                );
+            }
+
             if (status < 200 || status >= 300) {
                 throw new RuntimeException(
                         "Comparison Agent HTTP "
@@ -94,6 +107,8 @@ public class CollectionComparisonAgentClient {
                     CollectionComparisonResponse.class
             );
 
+        } catch (ResponseStatusException rateLimit) {
+            throw rateLimit;
         } catch (Exception error) {
             throw new RuntimeException(
                     "컬렉션 비교 요청 실패: "

@@ -680,9 +680,13 @@ export async function compareSmartCollection(
   );
 
   if (!response.ok) {
+    // The API maps downstream Gemini quota exhaustion to HTTP 429.
+    if (response.status === 429) {
+      throw new Error('COLLECTION_COMPARISON_RATE_LIMIT');
+    }
     const text = await response.text();
     throw new Error(
-      `컬렉션 비교 실패: HTTP ${response.status} ${text}`,
+      `컬렉션 비교 실패: HTTP ${response.status} ${text.slice(0, 400)}`,
     );
   }
 

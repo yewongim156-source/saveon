@@ -34,6 +34,7 @@ import ComparisonDigest from './src/components/ui/ComparisonDigest';
 import VideoThumbnail from './src/components/ui/VideoThumbnail';
 import CategoryFilter from './src/components/ui/CategoryFilter';
 import ExpandableEvidence from './src/components/ui/ExpandableEvidence';
+import ComparisonEvidenceCards from './src/components/ui/ComparisonEvidenceCards'; // SAVEON_COMPARISON_EVIDENCE_UX_V1
 // save:on UI_POLISH_V4
 // save:on VISUAL_REFINEMENT_V3
 import CollectionOverview from './src/components/ui/CollectionOverview';
@@ -701,6 +702,7 @@ export default function App() {
 
     setCollectionComparisonLoading(true);
     setCollectionComparisonError(null);
+    setCollectionComparison(null); // prevent an old result showing after a failed refresh
     setExpandedComparisonEvidence(null);
 
     try {
@@ -714,7 +716,9 @@ export default function App() {
     } catch (error) {
       console.error('❌ 컬렉션 비교 오류:', error);
       setCollectionComparisonError(
-        '비교 결과를 만들지 못했어요. 잠시 후 다시 시도해 주세요.',
+        error instanceof Error && error.message === 'COLLECTION_COMPARISON_RATE_LIMIT'
+          ? 'AI 비교 요청이 몰렸어요. 잠시 후 다시 비교해 주세요.'
+          : '비교 결과를 만들지 못했어요. 잠시 후 다시 시도해 주세요.',
       );
     } finally {
       setCollectionComparisonLoading(false);
@@ -3255,33 +3259,13 @@ export default function App() {
                               </Text>
 
                               {finding.evidences.length > 0 && (
-<ExpandableEvidence label="영상별 원문 근거 보기">
-{finding.evidences.map((evidence) => (
-                                <View
-                                  key={`disagreement-evidence:${index}:${evidence.contentId}:${evidence.quote}`}
-                                  style={styles.collectionComparisonEvidenceCard}
-                                >
-                                  <Text
-                                    style={styles.collectionComparisonItemTitle}
-                                    numberOfLines={1}
-                                  >
-                                    {evidence.title || `저장물 #${evidence.contentId}`}
-                                  </Text>
-                                  <Text style={styles.collectionComparisonEvidence}>
-                                    “{evidence.quote}”
-                                  </Text>
-                                  {evidence.timestampSeconds !== null && (
-                                    <Text style={styles.collectionComparisonTimestamp}>
-                                      {Math.floor(evidence.timestampSeconds / 60)}:
-                                      {String(
-                                        Math.floor(evidence.timestampSeconds % 60),
-                                      ).padStart(2, '0')}
-                                    </Text>
-                                  )}
-                                </View>
-                              ))}
-</ExpandableEvidence>
-)}
+                                <ExpandableEvidence label="영상별 원문 근거 보기">
+                                  <ComparisonEvidenceCards
+                                    evidences={finding.evidences}
+                                    onOpenContent={(contentId) => openDetail(String(contentId), 'search')}
+                                  />
+                                </ExpandableEvidence>
+                              )}
                             </View>
                           ),
                         )}
@@ -3322,13 +3306,12 @@ export default function App() {
                                   {finding.evidences.length}개 영상 근거 {expandedComparisonEvidence === `common:${index}` ? '접기 ▲' : '보기 ▼'}
                                 </Text>
                               </Pressable>
-                              {expandedComparisonEvidence === `common:${index}` &&
-                                finding.evidences.map((ev) => (
-                                  <Text key={`common-ev:${index}:${ev.contentId}`}
-                                        style={styles.collectionComparisonEvidence}>
-                                    #{ev.contentId} · {ev.quote}
-                                  </Text>
-                                ))}
+                              {expandedComparisonEvidence === `common:${index}` && (
+                                <ComparisonEvidenceCards
+                                  evidences={finding.evidences}
+                                  onOpenContent={(contentId) => openDetail(String(contentId), 'search')}
+                                />
+                              )}
                             </View>
                           ),
                         )}
@@ -3378,9 +3361,10 @@ export default function App() {
                                     </Text>
                                   </Pressable>
                                   {expandedComparisonEvidence === `unique:${index}` && (
-                                    <Text style={styles.collectionComparisonEvidence}>
-                                      “{finding.evidences[0].quote}”
-                                    </Text>
+                                    <ComparisonEvidenceCards
+                                      evidences={finding.evidences}
+                                      onOpenContent={(contentId) => openDetail(String(contentId), 'search')}
+                                    />
                                   )}
                                 </>
                               )}
@@ -3842,7 +3826,7 @@ export default function App() {
       <ScrollView contentContainerStyle={styles.page}>
         <Pressable
           style={styles.backButton}
-          onPress={() => goTab(detailReturnTab)}
+          onPress={() => setScreen({ name: detailReturnTab })}
         >
           <Ionicons
             name="chevron-back"
