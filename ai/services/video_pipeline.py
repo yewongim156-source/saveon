@@ -531,6 +531,7 @@ def analyze_video_file(
     source_description: str = "",
     source_channel: str = "",
     thumbnail_requested: bool = False,
+    prompt_variant: str = "baseline",
 ) -> dict:
     print(f"[VIDEO] 분석 시작: {video_path.name}")
 
@@ -686,6 +687,7 @@ def analyze_video_file(
                 source_description=source_description,
                 source_channel=source_channel,
                 review_excerpts=review_excerpt_lines(observations),
+                prompt_variant=prompt_variant,
             )
             step.set_output({
                 "primaryCategory": (
@@ -732,6 +734,7 @@ def analyze_video_file(
 
     result["structured"]["ocrEvidence"] = timed_ocr
     result["structured"]["videoEvidence"] = transcript_segments + timed_ocr
+    result["structured"]["promptVariant"] = prompt_variant
 
     # Immutable source excerpts; not ground-truth product specifications.
     if isinstance(result.get("structured"), dict):
@@ -741,6 +744,8 @@ def analyze_video_file(
         result.get("structured", {})
     )
     result = apply_verified_summary(result)
+    from services.external_reference import add_educational_reference
+    result = add_educational_reference(result)
     # Remove redundant broad labels only, after Gemini/fallback/verification.
     result = refine_analysis_categories(result, source_title=source_title)
 

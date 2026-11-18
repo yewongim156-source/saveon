@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 import shutil
 import sys
 import tempfile
@@ -38,6 +39,7 @@ app = FastAPI(
 class AnalyzeRequest(BaseModel):
     sourceUrl: str
     thumbnailRequested: bool = False  # rights confirmed by the user
+    promptVariant: Literal["baseline", "few_shot_v1"] = "baseline"
 
 
 class AnalyzeResponse(BaseModel):
@@ -121,10 +123,10 @@ def analyze_url(
             platform=platform,
             source_url=source_url,
         ):
-            return _analyze_source_url(source_url, thumbnail_requested=request.thumbnailRequested)
+            return _analyze_source_url(source_url, thumbnail_requested=request.thumbnailRequested, prompt_variant=request.promptVariant)
 
 
-def _analyze_source_url(source_url: str, *, thumbnail_requested: bool = False):
+def _analyze_source_url(source_url: str, *, thumbnail_requested: bool = False, prompt_variant: str = "baseline"):
     url = source_url.lower()
 
     if is_instagram_reel_url(source_url):
@@ -153,6 +155,7 @@ def _analyze_source_url(source_url: str, *, thumbnail_requested: bool = False):
                     source_description=media.description,
                     source_channel=media.channel,
                     thumbnail_requested=thumbnail_requested,
+                    prompt_variant=prompt_variant,
                 )
 
                 return AnalyzeResponse(**result)
@@ -205,6 +208,7 @@ def _analyze_source_url(source_url: str, *, thumbnail_requested: bool = False):
                     source_title=media.title,
                     source_description=media.description,
                     source_channel=media.channel,
+                    prompt_variant=prompt_variant,
                 )
                 return AnalyzeResponse(**result)
             except InvalidYouTubeUrlError as exc:

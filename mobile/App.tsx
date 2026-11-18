@@ -4065,6 +4065,16 @@ export default function App() {
                 <Text style={styles.mutedText}>영상 기반 요약 · 외부 검증 여부 확인 필요</Text>
               )}
               <DetailSummaryText text={detailItem.summary} />
+              {Array.isArray(structuredDetail?.externalReferences) &&
+                structuredDetail.externalReferences.map((reference: any, index: number) => {
+                  const url = String(reference?.url ?? '');
+                  if (!url.startsWith('https://ko.wikipedia.org/wiki/')) return null;
+                  return (
+                    <Pressable key={`${url}-${index}`} onPress={() => Linking.openURL(url)} accessibilityRole="link">
+                      <Text style={styles.inlineEditText}>위키백과 참고 자료 열기 ↗</Text>
+                    </Pressable>
+                  );
+                })}
             </View>
 
 

@@ -34,7 +34,7 @@ PostgreSQL connection string before deployment.
 - `GET /admin/evaluations/{id}`: annotation and available local analysis runs
 - `PUT /admin/evaluations/{id}`: update gold and annotation with revision conflict detection
 - `POST /admin/evaluations`: add a YouTube/Instagram URL as an unreviewed item
-- `POST /admin/evaluations/{id}/runs`: submit a run to the Spring API
+- `POST /admin/evaluations/{id}/runs`: submit an evaluation-only run to the AI API
 - `POST /admin/evaluations/{id}/runs/{runId}/refresh`: retrieve and save its latest status/result
 - `PUT /admin/evaluations/{id}/reviews/{runId}`: save a human review for a run and gold revision
 
@@ -43,17 +43,37 @@ without overwriting later edits. Edits are stored in the developer database, not
 written back to the original files or shared through Git. Existing results are
 read from fixed `.runtime` directories, so they remain local. An empty STT or OCR
 list means the selected run did not store that evidence; it does not prove
-extraction failed. Runs use the existing asynchronous app analysis flow and do
-not automatically score results. They persist in the developer database and
-are refreshed explicitly in the UI. Spring must be running; override its URL
-using `SAVEON_API_BASE_URL`. A submission timeout may mean the request was
-accepted; inspect the app server before retrying. YouTube/Instagram access and
-Gemini free-tier quota still apply.
+extraction failed. New evaluation-only runs call the same AI analysis endpoint
+directly and never create a Spring content/library record. They persist in the
+developer database and are refreshed explicitly in the UI; they are not
+automatically scored. Set `SAVEON_AI_API_BASE_URL` if needed. Existing legacy
+runs may still refer to Spring records. The in-process worker is not durable:
+restarting the developer API mid-run can leave an unfinished status requiring
+manual recovery. YouTube/Instagram access and Gemini free-tier quota still apply.
 The comparison page shows two selected runs side by side. Judgments and notes
 are human-authored, not automatic semantic or factual checks. Changing the gold
 annotation marks prior reviews stale; review edits are kept in the developer
 database and are not committed through Git. Annotation updates also increment
 the revision and consequently mark previous reviews stale.
+
+Evaluation can select `baseline` or `few_shot_v1`; the selected variant is
+stored with the result. It does not change the app's default prompt. For an
+apples-to-apples prompt experiment, `evaluation/compare_prompt_variants.py`
+reuses the same saved STT/OCR evidence and writes separate local results; it
+does not re-download video or add to the library. Demo examples are fictional
+and must not be treated as ground truth. One run per variant is not proof of
+improvement; review multiple independently labelled items.
+
+## External reference scope
+
+`WIKIPEDIA_REFERENCE_ENABLED` defaults to true. The AI pipeline may append a
+single exactly matching Korean Wikipedia introductory reference for an
+evidence-linked target when the content type is EDUCATIONAL. The source and
+URL are included, and `BACKGROUND_NOT_VERIFIED` is recorded. This does not
+verify the video's claims and is not used for product, health, price or place
+verification. Missing matches and network failures leave the summary alone.
+The public API requires a meaningful user agent and has rate limits; see
+https://www.mediawiki.org/wiki/Wikimedia_APIs/Access_policy.
 
 The gold editor offers fields for target names, required facts, whole-video
 facts and global steps. More detailed fields, such as target-specific steps,

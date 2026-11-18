@@ -5,16 +5,17 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import SessionLocal, get_db
 from models import EvaluationItem, EvaluationReview, EvaluationRun
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +25,9 @@ RUNS = {
     "after-v2": ("user-pilot-after-v2", "개선 후 분석"),
     "grounding-replay": ("grounding-replay", "기존 추출 데이터로 Gemini 재실행"),
 }
+REPLAY_RUNS = {"replay-baseline": "baseline.json", "replay-fewshot": "few_shot_v1.json"}
 SPRING_API = os.getenv("SAVEON_API_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
+AI_API = os.getenv("SAVEON_AI_API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
 def platform_for_url(value: str) -> str:
@@ -90,6 +93,10 @@ class ItemCreate(BaseModel):
     title: str = Field(default="", max_length=200)
 
 
+class RunConfig(BaseModel):
+    promptVariant: Literal["baseline", "few_shot_v1"] = "baseline"
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_item(payload: ItemCreate, db: Session = Depends(get_db)):
     url = payload.url.strip()
@@ -150,53 +157,84 @@ def load_run(item_id: str, key: str) -> dict | None:
     return format_run(data, key, label)
 
 
+def load_prompt_replay(item_id: str, key: str) -> dict | None:
+    path = ROOT / ".runtime" / "prompt-comparison-user001-20261117" / REPLAY_RUNS[key]
+    if not path.is_file():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("inputItemId") != item_id:
+        return None
+    variant = data.get("evaluationConfig", {}).get("promptVariant", "")
+    wrapped = {"content": data.get("result", {}), "inputRunId": data.get("inputRunId"), "evaluationConfig": data.get("evaluationConfig")}
+    return format_run(wrapped, key, f"동일 근거 재실행 · {variant}")
+
+
 def run_response(run: EvaluationRun) -> dict:
     content = json.loads(run.snapshot_json) if run.snapshot_json else {}
+    variant = content.get("evaluationConfig", {}).get("promptVariant", "baseline")
     started = run.started_at.isoformat() if run.started_at else None
     data = {"content": content, "startedAt": started, "contentId": run.content_id, "error": run.error}
-    result = format_run(data, run.id, f"직접 실행 · {started or ''}")
+    result = format_run(data, run.id, f"평가 실행 ({variant}) · {started or ''}")
     result["status"] = run.status
     result["error"] = run.error
     return result
 
 
+def execute_evaluation_run(run_id: str, url: str, prompt_variant: str) -> None:
+    """Run directly against AI so evaluation never creates a library item."""
+    db = SessionLocal()
+    try:
+        run = db.get(EvaluationRun, run_id)
+        if not run:
+            return
+        run.status = "ANALYZING"
+        db.commit()
+        with httpx.Client(timeout=600, trust_env=False) as client:
+            response = client.post(f"{AI_API}/analyze", json={"sourceUrl": url, "promptVariant": prompt_variant})
+            response.raise_for_status()
+            result = response.json()
+        if not isinstance(result, dict) or not isinstance(result.get("structured"), dict):
+            raise ValueError("invalid AI analysis response")
+        content = {"status": "COMPLETED", "title": result.get("title"), "summary": result.get("summary"),
+                   "structuredAnalysis": result["structured"], "categories": result.get("categories", []),
+                   "keywords": result.get("keywords", []), "entities": result.get("entities", []),
+                   "evaluationConfig": {"promptVariant": prompt_variant}}
+        run.snapshot_json = json.dumps(content, ensure_ascii=False)
+        run.status = "COMPLETED"
+    except Exception:
+        db.rollback()
+        run = db.get(EvaluationRun, run_id)
+        if not run:
+            return
+        run.status = "FAILED"
+        run.error = "AI 분석에 실패했습니다. AI 서버 상태와 로그를 확인해 주세요."
+    finally:
+        if run:
+            run.active_item = None
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+        db.close()
+
+
 @router.post("/{item_id}/runs", status_code=status.HTTP_202_ACCEPTED)
-def start_run(item_id: str, db: Session = Depends(get_db)):
+def start_run(item_id: str, background_tasks: BackgroundTasks, payload: RunConfig | None = None, db: Session = Depends(get_db)):
     item = find_item(db, item_id)
     data = json.loads(item.payload_json)
     if data.get("evaluationStatus") == "EXCLUDED":
         raise HTTPException(400, "평가에서 제외된 영상입니다.")
     source = data.get("source", {})
     url = str(source.get("url", ""))
-    platform = platform_for_url(url)
-    run = EvaluationRun(id=uuid.uuid4().hex, item_id=item_id, active_item=item_id, status="SUBMITTING")
+    platform_for_url(url)
+    variant = payload.promptVariant if payload else "baseline"
+    run = EvaluationRun(id=uuid.uuid4().hex, item_id=item_id, active_item=item_id, status="PENDING",
+                        snapshot_json=json.dumps({"evaluationConfig": {"promptVariant": variant}}))
     db.add(run)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "이 영상의 분석이 이미 진행 중입니다.")
-    try:
-        with httpx.Client(timeout=15, trust_env=False) as client:
-            response = client.post(f"{SPRING_API}/api/v1/contents", json={"sourceUrl": url, "platform": platform})
-            response.raise_for_status()
-            content = response.json()
-            content_id = content.get("id")
-            if not isinstance(content_id, int) or isinstance(content_id, bool) or content_id < 1:
-                raise ValueError("invalid content id")
-        run.content_id = str(content_id)
-        run.status = str(content.get("status", "ANALYZING"))
-        run.snapshot_json = json.dumps(content, ensure_ascii=False)
-        if run.status in {"COMPLETED", "FAILED"}:
-            run.active_item = None
-            run.finished_at = datetime.now(timezone.utc)
-    except (httpx.HTTPError, ValueError, TypeError):
-        # A timeout can occur after the app accepted the request; don't retry it.
-        run.status = "SUBMISSION_UNKNOWN"
-        run.error = "요청 결과를 확인하지 못했습니다. 앱 서버에서 분석이 시작됐을 수도 있으니 재실행 전 확인하세요."
-        run.active_item = None
-        run.finished_at = datetime.now(timezone.utc)
-    db.commit()
+    background_tasks.add_task(execute_evaluation_run, run.id, url, variant)
     return run_response(run)
 
 
@@ -207,7 +245,10 @@ def refresh_run(item_id: str, run_id: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "분석 실행을 찾을 수 없습니다.")
     if run.status in {"COMPLETED", "FAILED", "SUBMISSION_UNKNOWN"}:
         return run_response(run)
-    if not run.content_id or not run.content_id.isdigit():
+    # New evaluation-only jobs are persisted by the worker; no app record exists.
+    if not run.content_id:
+        return run_response(run)
+    if not run.content_id.isdigit():
         raise HTTPException(409, "요청 전달 상태가 불명확합니다. 앱 서버를 확인해 주세요.")
     try:
         with httpx.Client(timeout=10, trust_env=False) as client:
@@ -230,7 +271,7 @@ def get_item(item_id: str, db: Session = Depends(get_db)):
     item = find_item(db, item_id)
     result = as_response(item)
     live_runs = db.scalars(select(EvaluationRun).where(EvaluationRun.item_id == item_id).order_by(EvaluationRun.started_at.desc())).all()
-    result["runs"] = [run_response(run) for run in live_runs] + [run for key in RUNS if (run := load_run(item_id, key)) is not None]
+    result["runs"] = [run_response(run) for run in live_runs] + [run for key in REPLAY_RUNS if (run := load_prompt_replay(item_id, key)) is not None] + [run for key in RUNS if (run := load_run(item_id, key)) is not None]
     reviews = db.scalars(select(EvaluationReview).where(EvaluationReview.item_id == item_id)).all()
     result["reviews"] = {review.run_id: {"revision": review.revision, "goldRevision": review.gold_revision,
         "stale": review.gold_revision != item.revision, "data": json.loads(review.payload_json)} for review in reviews}
@@ -250,7 +291,7 @@ def save_review(item_id: str, run_id: str, payload: ReviewUpdate, db: Session = 
     if payload.goldRevision != item.revision:
         raise HTTPException(409, "정답이 변경되었습니다. 다시 불러와 검토해 주세요.")
     live_run = db.get(EvaluationRun, run_id)
-    if not ((live_run and live_run.item_id == item_id) or (run_id in RUNS and load_run(item_id, run_id))):
+    if not ((live_run and live_run.item_id == item_id) or (run_id in RUNS and load_run(item_id, run_id)) or (run_id in REPLAY_RUNS and load_prompt_replay(item_id, run_id))):
         raise HTTPException(404, "해당 영상의 분석 결과를 찾을 수 없습니다.")
     if any(value not in {"UNREVIEWED", "CORRECT", "MISSING", "INCORRECT", "UNCLEAR"} for value in payload.judgments.values()):
         raise HTTPException(422, "유효하지 않은 검토 상태입니다.")

@@ -76,17 +76,30 @@ class DeveloperApiTests(unittest.TestCase):
         self.assertEqual(created.json()["item"]["annotation"]["status"], "DRAFT")
         with patch("evaluation_api.httpx.Client") as client:
             session = client.return_value.__enter__.return_value
-            session.post.return_value.json.return_value = {"id": 42, "status": "ANALYZING"}
+            session.post.return_value.json.return_value = {"title": "영상", "summary": "정리", "structured": {"videoEvidence": [{"modality": "STT", "text": "음성"}]}}
             started = self.client.post(f"/admin/evaluations/{item_id}/runs")
             self.assertEqual(started.status_code, 202)
             run_id = started.json()["id"]
-            self.assertEqual(self.client.post(f"/admin/evaluations/{item_id}/runs").status_code, 409)
-            session.get.return_value.json.return_value = {"id": 42, "status": "COMPLETED", "summary": "정리", "structuredAnalysis": {"videoEvidence": [{"modality": "STT", "text": "음성"}]}}
+            self.assertTrue(session.post.call_args.args[0].endswith('/analyze'))
+            self.assertNotIn('/contents', session.post.call_args.args[0])
+            self.assertEqual(session.post.call_args.kwargs['json']['promptVariant'], 'baseline')
             finished = self.client.post(f"/admin/evaluations/{item_id}/runs/{run_id}/refresh")
             self.assertEqual(finished.json()["status"], "COMPLETED")
             self.assertEqual(finished.json()["stt"][0]["text"], "음성")
             self.assertEqual(self.client.get(f"/admin/evaluations/{item_id}").json()["runs"][0]["gemini"]["summary"], "정리")
             self.assertEqual(self.client.post(f"/admin/evaluations/{item_id}/runs").status_code, 202)
+
+    def test_few_shot_variant_is_recorded_and_passed_to_ai(self):
+        item = self.client.post("/admin/evaluations", json={"url": "https://youtu.be/abc"}).json()["item"]
+        with patch("evaluation_api.httpx.Client") as client:
+            session = client.return_value.__enter__.return_value
+            session.post.return_value.json.return_value = {"summary": "예시", "structured": {}}
+            response = self.client.post(f"/admin/evaluations/{item['id']}/runs", json={"promptVariant": "few_shot_v1"})
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(session.post.call_args.kwargs['json']['promptVariant'], 'few_shot_v1')
+            run = self.client.get(f"/admin/evaluations/{item['id']}").json()["runs"][0]
+            self.assertIn("few_shot_v1", run["label"])
+            self.assertEqual(run["status"], "COMPLETED")
 
     def test_invalid_urls_and_submission_failure(self):
         self.assertEqual(self.client.post("/admin/evaluations", json={"url": "http://youtube.com.evil.test/a"}).status_code, 422)
@@ -96,8 +109,9 @@ class DeveloperApiTests(unittest.TestCase):
         with patch("evaluation_api.httpx.Client") as client:
             client.return_value.__enter__.return_value.post.side_effect = httpx.ConnectError("unavailable")
             result = self.client.post(f"/admin/evaluations/{item['id']}/runs").json()
-            self.assertEqual(result["status"], "SUBMISSION_UNKNOWN")
-            self.assertIn("재실행 전 확인", result["error"])
+            self.assertEqual(result["status"], "PENDING")
+            saved = self.client.get(f"/admin/evaluations/{item['id']}").json()["runs"][0]
+            self.assertEqual(saved["status"], "FAILED")
 
     def test_review_is_saved_per_run_and_marks_changed_gold_stale(self):
         with tempfile.TemporaryDirectory() as folder:
