@@ -473,6 +473,7 @@ def postprocess_with_llm(
     source_title: str = "",
     source_description: str = "",
     source_channel: str = "",
+    prompt_variant: str = "baseline",
 ) -> dict:
     if not GEMINI_API_KEY:
         raise RuntimeError(
@@ -506,6 +507,20 @@ def postprocess_with_llm(
             "zero_shot_visual_labels": clean_vision,
         },
     }
+
+    examples = """
+Examples below are fictional demonstrations of grouping evidence, not facts
+about the current video. Do not copy names or example IDs into your answer.
+Input: [{id: stt-a, text: '가상 제품 A는 산뜻한 제형'},
+        {id: stt-b, text: '가상 제품 B는 촉촉한 사용감'}]
+Output targets: [{name: '가상 제품 A', nameEvidenceIds: ['stt-a'],
+  details: [{text: '산뜻한 제형', evidenceIds: ['stt-a']}], steps: []},
+ {name: '가상 제품 B', nameEvidenceIds: ['stt-b'],
+  details: [{text: '촉촉한 사용감', evidenceIds: ['stt-b']}], steps: []}]
+Input: [{id: ocr-a, text: '1. 재료를 썬다'}, {id: ocr-b, text: '2. 재료를 볶는다'}]
+Output globalSteps: [{text: '재료를 썬다', evidenceIds: ['ocr-a']},
+                    {text: '재료를 볶는다', evidenceIds: ['ocr-b']}]
+""" if prompt_variant == "few_shot_v1" else ""
 
     prompt = f"""
 You are the metadata analysis engine for an app called save:on.
@@ -544,7 +559,7 @@ IMPORTANT RULES:
 
 4. The title must describe the actual main topic naturally in Korean.
 
-5. The summary should contain 1-3 concise Korean sentences.
+5. Summarize the useful information concisely in Korean.
 
 6. categories must contain 1-3 items and must be selected ONLY
    from this list:
@@ -604,6 +619,8 @@ IMPORTANT RULES:
     health claims and prices as claims from the video, not verified facts.
     In target details and steps, write concise useful information without
     repetitive narration such as "영상에서 소개" or "이 영상은 설명합니다".
+    Prices mentioned in a video can be outdated. If including a price,
+    explicitly label it as the price shown in the video, not a current price.
 
 19. For each target name provide nameEvidenceIds. Every detail and step must
     be an object with text and evidenceIds citing exact input unit IDs.
@@ -613,6 +630,8 @@ IMPORTANT RULES:
 INPUT DATA:
 
 {json.dumps(input_data, ensure_ascii=False, indent=2)}
+
+{examples}
 """.strip()
 
     client = create_gemini_client()

@@ -759,6 +759,9 @@ export default function App() {
   function renderDetail() {
     if (!detailItem) return null;
 
+    const referenceUrl = detailItem.summary.split('\n').find(
+      line => line.startsWith('https://ko.wikipedia.org/wiki/'),
+    );
     const canOpenSource =
       detailItem.sourceUrl?.startsWith('http');
 
@@ -798,6 +801,11 @@ export default function App() {
           <Text style={styles.bodyText}>
             {detailItem.summary}
           </Text>
+          {referenceUrl && (
+            <Pressable onPress={() => Linking.openURL(referenceUrl)} accessibilityRole="link">
+              <Text style={styles.mutedText}>위키백과 참고 자료 열기 ↗</Text>
+            </Pressable>
+          )}
         </View>
 
         <Text style={styles.sectionTitle}>

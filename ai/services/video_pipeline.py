@@ -433,6 +433,7 @@ def analyze_video_file(
     source_title: str = "",
     source_description: str = "",
     source_channel: str = "",
+    prompt_variant: str = "baseline",
 ) -> dict:
     print(f"[VIDEO] 분석 시작: {video_path.name}")
 
@@ -578,6 +579,7 @@ def analyze_video_file(
                 source_title=source_title,
                 source_description=source_description,
                 source_channel=source_channel,
+                prompt_variant=prompt_variant,
             )
             step.set_output({
                 "primaryCategory": (
@@ -617,11 +619,14 @@ def analyze_video_file(
 
     result["structured"]["ocrEvidence"] = timed_ocr
     result["structured"]["videoEvidence"] = transcript_segments + timed_ocr
+    result["structured"]["promptVariant"] = prompt_variant
 
     result["structured"] = verify_structured_claims(
         result.get("structured", {})
     )
     result = apply_verified_summary(result)
+    from services.external_reference import add_educational_reference
+    result = add_educational_reference(result)
 
     print("[VIDEO] 분석 완료")
     print(f"[VIDEO] transcript={transcript[:120]}")

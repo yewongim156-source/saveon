@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 import shutil
 import sys
 import tempfile
@@ -36,6 +37,7 @@ app = FastAPI(
 
 class AnalyzeRequest(BaseModel):
     sourceUrl: str
+    promptVariant: Literal["baseline", "few_shot_v1"] = "baseline"
 
 
 class AnalyzeResponse(BaseModel):
@@ -104,14 +106,11 @@ def analyze_url(request: AnalyzeRequest):
         else "WEB"
     )
 
-    with trace_session(
-        platform=platform,
-        source_url=source_url,
-    ):
-        return _analyze_source_url(source_url)
+    with trace_session(platform=platform, source_url=source_url):
+        return _analyze_source_url(source_url, prompt_variant=request.promptVariant)
 
 
-def _analyze_source_url(source_url: str):
+def _analyze_source_url(source_url: str, *, prompt_variant: str = "baseline"):
     url = source_url.lower()
 
     if is_instagram_reel_url(source_url):
@@ -139,6 +138,7 @@ def _analyze_source_url(source_url: str):
                     source_title=media.title,
                     source_description=media.description,
                     source_channel=media.channel,
+                    prompt_variant=prompt_variant,
                 )
 
                 return AnalyzeResponse(**result)
@@ -191,6 +191,7 @@ def _analyze_source_url(source_url: str):
                     source_title=media.title,
                     source_description=media.description,
                     source_channel=media.channel,
+                    prompt_variant=prompt_variant,
                 )
                 return AnalyzeResponse(**result)
             except InvalidYouTubeUrlError as exc:
