@@ -10,6 +10,12 @@ public record CreateContentRequest(
         String sourceUrl,
 
         @NotNull
-        ContentPlatform platform
+        ContentPlatform platform,
+        boolean thumbnailAllowed
 ) {
+    public CreateContentRequest(String sourceUrl, ContentPlatform platform) {
+        this(sourceUrl, platform, false);
+    }
+
 }
+// SAVEON_INSTAGRAM_THUMBNAIL_V1

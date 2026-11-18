@@ -3,6 +3,9 @@ package com.saveon.api.content;
 import com.saveon.api.ai.AiAnalyzeResponse;
 import com.saveon.api.ai.AiClient;
 import com.saveon.api.content.dto.CreateContentRequest;
+import com.saveon.api.quality.canonical.CanonicalEntityService;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -14,11 +17,19 @@ public class ContentService {
     private final ContentRepository contentRepository;
     private final AiClient aiClient;
     private final ContentAnalysisWorker contentAnalysisWorker;
+    private final CanonicalEntityService canonicalEntityService;
+    private final int semanticDefaultLimit;
+    private final int semanticMaxLimit;
 
     public ContentService(
             ContentRepository contentRepository,
             AiClient aiClient,
-            ContentAnalysisWorker contentAnalysisWorker
+            ContentAnalysisWorker contentAnalysisWorker,
+            CanonicalEntityService canonicalEntityService,
+            @Value("${saveon.search.semantic-default-limit:20}")
+            int semanticDefaultLimit,
+            @Value("${saveon.search.semantic-max-limit:50}")
+            int semanticMaxLimit
     ) {
         this.contentRepository =
                 contentRepository;
@@ -28,6 +39,15 @@ public class ContentService {
 
         this.contentAnalysisWorker =
                 contentAnalysisWorker;
+
+        this.canonicalEntityService =
+                canonicalEntityService;
+
+        this.semanticDefaultLimit =
+                semanticDefaultLimit;
+
+        this.semanticMaxLimit =
+                semanticMaxLimit;
     }
 
 
@@ -40,6 +60,11 @@ public class ContentService {
                         request.platform()
                 );
 
+        // Explicit consent is honored for Instagram Reels only.
+        content.setThumbnailAllowed(
+                request.platform() == ContentPlatform.INSTAGRAM
+                        && request.thumbnailAllowed()
+        );
         content.startAnalysis();
 
         content =
@@ -98,11 +123,35 @@ public class ContentService {
                     result.summary(),
                     result.categories(),
                     result.keywords(),
-                    result.entities()
+                    result.entities(),
+                    result.structuredJson()
             );
 
-        } catch (Exception e) {
+            canonicalEntityService
+                    .applyKnownEntities(
+                            content
+                    );
 
+            try {
+                var embeddingResult =
+                        aiClient.embed(
+                                result.embeddingText()
+                        );
+
+                content.setEmbedding(
+                        embeddingResult.asArray(),
+                        embeddingResult.model(),
+                        result.embeddingText()
+                );
+
+            } catch (Exception embeddingError) {
+                System.err.println(
+                        "임베딩 생성 실패 - 분석 결과는 유지: "
+                                + embeddingError.getMessage()
+                );
+            }
+
+        } catch (Exception e) {
             System.err.println(
                     "영상 AI 분석 실패: "
                             + e.getMessage()
@@ -170,6 +219,41 @@ public class ContentService {
     }
 
 
+    public List<Content> semanticSearch(
+            String query,
+            Integer requestedLimit
+    ) {
+        if (query == null
+                || query.trim().isEmpty()) {
+            return List.of();
+        }
+
+        int limit =
+                requestedLimit != null
+                        ? requestedLimit
+                        : semanticDefaultLimit;
+
+        limit =
+                Math.max(
+                        1,
+                        Math.min(
+                                limit,
+                                semanticMaxLimit
+                        )
+                );
+
+        var embedding =
+                aiClient.embed(
+                        query.trim()
+                );
+
+        return contentRepository.semanticSearch(
+                embedding.asArray(),
+                PageRequest.of(0, limit)
+        );
+    }
+
+
     public Content findById(
             Long id
     ) {
@@ -184,3 +268,4 @@ public class ContentService {
                 );
     }
 }
+// SAVEON_INSTAGRAM_THUMBNAIL_V1

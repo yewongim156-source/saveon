@@ -72,6 +72,23 @@ public class ContentController {
     }
 
 
+    @GetMapping("/search/semantic")
+    public List<Content> semanticSearch(
+            @RequestParam(name = "q")
+            String query,
+            @RequestParam(
+                    name = "limit",
+                    required = false
+            )
+            Integer limit
+    ) {
+        return contentService.semanticSearch(
+                query,
+                limit
+        );
+    }
+
+
     @GetMapping("/{id}")
     public Content findById(
             @PathVariable

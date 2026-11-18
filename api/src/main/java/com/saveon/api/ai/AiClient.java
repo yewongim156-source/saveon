@@ -22,20 +22,26 @@ public class AiClient {
             String aiBaseUrl
     ) {
         this.aiBaseUrl = aiBaseUrl;
-
-        this.jsonMapper =
-                JsonMapper.builder().build();
+        this.jsonMapper = JsonMapper.builder().build();
     }
 
-    public AiAnalyzeResponse analyze(
-            String sourceUrl
-    ) {
+    // save:on TRUE_PROGRESS_V1: preserve old callers.
+    public AiAnalyzeResponse analyze(String sourceUrl) {
+        return analyze(sourceUrl, null);
+    }
+
+    public AiAnalyzeResponse analyze(String sourceUrl, Long contentId) {
+        return analyze(sourceUrl, contentId, false);
+    }
+
+    public AiAnalyzeResponse analyze(String sourceUrl, Long contentId,
+            boolean thumbnailRequested) {
         HttpURLConnection connection = null;
 
         try {
             byte[] requestBody =
                     jsonMapper.writeValueAsBytes(
-                            new AiAnalyzeRequest(sourceUrl)
+                            java.util.Map.of("sourceUrl", sourceUrl, "thumbnailRequested", thumbnailRequested)
                     );
 
             connection =
@@ -54,14 +60,18 @@ public class AiClient {
                     "Content-Type",
                     "application/json; charset=UTF-8"
             );
+            if (contentId != null) {
+                connection.setRequestProperty(
+                        "X-Saveon-Content-Id",
+                        contentId.toString()
+                );
+            }
             connection.setFixedLengthStreamingMode(
                     requestBody.length
             );
 
-            try (
-                    OutputStream output =
-                            connection.getOutputStream()
-            ) {
+            try (OutputStream output =
+                         connection.getOutputStream()) {
                 output.write(requestBody);
                 output.flush();
             }
@@ -112,14 +122,124 @@ public class AiClient {
         }
     }
 
+    public AiEmbedResponse embed(
+            String text
+    ) {
+        HttpURLConnection connection = null;
+
+        try {
+            byte[] requestBody =
+                    jsonMapper.writeValueAsBytes(
+                            new AiEmbedRequest(text)
+                    );
+
+            connection =
+                    (HttpURLConnection)
+                            URI.create(
+                                    aiBaseUrl + "/embed"
+                            )
+                            .toURL()
+                            .openConnection();
+
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setConnectTimeout(10_000);
+            connection.setReadTimeout(60_000);
+            connection.setRequestProperty(
+                    "Content-Type",
+                    "application/json; charset=UTF-8"
+            );
+            connection.setFixedLengthStreamingMode(
+                    requestBody.length
+            );
+
+            try (OutputStream output =
+                         connection.getOutputStream()) {
+                output.write(requestBody);
+                output.flush();
+            }
+
+            int status = connection.getResponseCode();
+            InputStream input =
+                    status >= 200 && status < 300
+                            ? connection.getInputStream()
+                            : connection.getErrorStream();
+
+            String responseBody;
+            if (input != null) {
+                try (input) {
+                    responseBody =
+                            new String(
+                                    input.readAllBytes(),
+                                    StandardCharsets.UTF_8
+                            );
+                }
+            } else {
+                responseBody = "";
+            }
+
+            if (status < 200 || status >= 300) {
+                throw new RuntimeException(
+                        "FastAPI HTTP "
+                                + status
+                                + ": "
+                                + responseBody
+                );
+            }
+
+            AiEmbedResponse result =
+                    jsonMapper.readValue(
+                            responseBody,
+                            AiEmbedResponse.class
+                    );
+
+            if (result.dimensions() != 768
+                    || result.vector() == null
+                    || result.vector().size() != 768) {
+                throw new IllegalStateException(
+                        "임베딩은 768차원이어야 합니다."
+                );
+            }
+
+            return result;
+
+        } catch (Exception e) {
+            throw new RuntimeException(
+                    "FastAPI 임베딩 요청 실패: "
+                            + e.getMessage(),
+                    e
+            );
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
     public AiAnalyzeResponse analyzeVideo(
             MultipartFile file
     ) {
         HttpURLConnection connection = null;
 
         try {
-            byte[] videoBytes =
-                    file.getBytes();
+            if (file == null || file.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "업로드된 영상 파일이 비어 있습니다."
+                );
+            }
+
+            byte[] videoBytes = file.getBytes();
+
+            if (videoBytes.length == 0) {
+                throw new IllegalArgumentException(
+                        "영상 바이트가 0 bytes여서 AI 서버로 전송하지 않았습니다."
+                );
+            }
+
+            String originalFilename =
+                    file.getOriginalFilename() != null
+                            ? file.getOriginalFilename()
+                            : "upload.mp4";
 
             String contentType =
                     file.getContentType() != null
@@ -128,6 +248,8 @@ public class AiClient {
 
             System.out.println(
                     "FastAPI RAW 영상 전송 시작: "
+                            + originalFilename
+                            + " / "
                             + videoBytes.length
                             + " bytes"
             );
@@ -135,8 +257,7 @@ public class AiClient {
             connection =
                     (HttpURLConnection)
                             URI.create(
-                                    aiBaseUrl
-                                            + "/analyze-video-raw"
+                                    aiBaseUrl + "/analyze-video-raw"
                             )
                             .toURL()
                             .openConnection();
@@ -144,32 +265,26 @@ public class AiClient {
             connection.setRequestMethod("POST");
             connection.setDoOutput(true);
             connection.setConnectTimeout(10_000);
-            connection.setReadTimeout(300_000);
-
+            connection.setReadTimeout(1_800_000);
             connection.setRequestProperty(
                     "Content-Type",
                     contentType
             );
-
             connection.setRequestProperty(
                     "X-Filename",
-                    "upload.mp4"
+                    originalFilename
             );
-
             connection.setFixedLengthStreamingMode(
                     videoBytes.length
             );
 
-            try (
-                    OutputStream output =
-                            connection.getOutputStream()
-            ) {
+            try (OutputStream output =
+                         connection.getOutputStream()) {
                 output.write(videoBytes);
                 output.flush();
             }
 
-            int status =
-                    connection.getResponseCode();
+            int status = connection.getResponseCode();
 
             InputStream input =
                     status >= 200 && status < 300
@@ -177,7 +292,6 @@ public class AiClient {
                             : connection.getErrorStream();
 
             String responseBody;
-
             if (input != null) {
                 try (input) {
                     responseBody =
@@ -191,16 +305,13 @@ public class AiClient {
             }
 
             System.out.println(
-                    "FastAPI HTTP status: "
-                            + status
-            );
-
-            System.out.println(
-                    "FastAPI response: "
-                            + responseBody
+                    "FastAPI HTTP status: " + status
             );
 
             if (status < 200 || status >= 300) {
+                System.err.println(
+                        "FastAPI response: " + responseBody
+                );
                 throw new RuntimeException(
                         "FastAPI HTTP "
                                 + status
@@ -222,12 +333,10 @@ public class AiClient {
             return result;
 
         } catch (Exception e) {
-
             System.err.println(
-                    "❌ FastAPI RAW 영상 전송 오류"
+                    "❌ FastAPI RAW 영상 전송 오류: "
+                            + e.getMessage()
             );
-
-            e.printStackTrace();
 
             throw new RuntimeException(
                     "FastAPI 영상 전송 실패: "
@@ -242,3 +351,6 @@ public class AiClient {
         }
     }
 }
+
+// save:on TRUE_PROGRESS_V1
+// SAVEON_INSTAGRAM_THUMBNAIL_V1
