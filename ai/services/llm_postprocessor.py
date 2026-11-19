@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -51,6 +52,33 @@ def create_gemini_client() -> genai.Client:
             ),
         ),
     )
+
+TRANSIENT_ERROR_MARKERS = (
+    "503", "UNAVAILABLE", "504", "DEADLINE", "timed out", "500 INTERNAL", "overloaded",
+)
+RETRY_DELAYS_SECONDS = (4, 10, 25)
+
+
+def _generate_with_retry(client, **kwargs):
+    """generate_content with longer backoff for temporary overload (503/504/timeouts).
+
+    The shared client only retries a few times within seconds, which is not enough
+    for demand spikes. After two failures a fallback model is tried. Quota errors
+    (429) are not retried: repeating them only makes the burst worse.
+    """
+    primary = kwargs["model"]
+    fallback = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.1-flash-lite").strip()
+    for attempt in range(len(RETRY_DELAYS_SECONDS) + 1):
+        model = fallback if attempt >= 2 and fallback and fallback != primary else primary
+        try:
+            return client.models.generate_content(**{**kwargs, "model": model})
+        except Exception as exc:
+            transient = any(marker in str(exc) for marker in TRANSIENT_ERROR_MARKERS)
+            if not transient or attempt == len(RETRY_DELAYS_SECONDS):
+                raise
+            print(f"[LLM] 일시 오류({model}) - {RETRY_DELAYS_SECONDS[attempt]}초 후 재시도 {attempt + 1}/{len(RETRY_DELAYS_SECONDS)}")
+            time.sleep(RETRY_DELAYS_SECONDS[attempt])
+
 
 MAX_TRANSCRIPT_CHARS = 3500
 MAX_OCR_LINES = 100
@@ -377,7 +405,18 @@ def _normalize_entity_details(value) -> list[dict]:
     return result
 
 
-def _normalize_claims(value) -> list[dict]:
+OBJECTIVE_CLAIM_TYPES = {"LOCATION", "PRICE", "DATE_TIME", "TRAVEL_RULE", "STATISTIC"}
+EVALUATIVE_PATTERN = re.compile(
+    r"(가장|제일|최고|최상|최악|좋다|좋은|좋고|좋음|좋아|추천|맛있|예쁜|예쁘|유명|인기|가볍게|쉽게|편하게|편리|훌륭|완벽|대박|만족|효과|탁월|보장)"
+)
+
+
+def _is_objective_claim(text: str, claim_type: str) -> bool:
+    """Only checkable facts (place, route, price, date, hours) are worth a web search."""
+    return claim_type in OBJECTIVE_CLAIM_TYPES and not EVALUATIVE_PATTERN.search(text)
+
+
+def _normalize_claims(value, *, objective_only: bool = False) -> list[dict]:
     if not isinstance(value, list):
         return []
 
@@ -405,6 +444,10 @@ def _normalize_claims(value) -> list[dict]:
         search_query = " ".join(
             str(item.get("searchQuery", "")).split()
         ).strip()
+        if objective_only and verifiable and not _is_objective_claim(text, claim_type):
+            # Keep the statement but never search for an opinion.
+            verifiable = False
+            search_query = ""
 
         result.append({
             "text": text[:240],
@@ -458,6 +501,20 @@ def _fallback_title_from_description(
     return candidate[:60]
 
 
+PROMPT_VARIANTS = ("baseline", "few_shot_v1", "structured_v2")
+
+
+def default_prompt_variant() -> str:
+    """Variant the app uses when a request does not choose one.
+
+    structured_v2 is the app default. The evaluation console always sends its
+    variant explicitly, so baseline comparisons are unaffected. Set
+    DEFAULT_PROMPT_VARIANT=baseline to go back to the old prompt.
+    """
+    value = os.getenv("DEFAULT_PROMPT_VARIANT", "").strip()
+    return value if value in PROMPT_VARIANTS else "structured_v2"
+
+
 STRUCTURED_V2_RULES = """
 STRUCTURED V2 RULES (they override earlier rules wherever they conflict):
 
@@ -468,18 +525,24 @@ A. NAMES. For product, brand, person, tool, place and shop names, prefer the
    letters). When OCR shows a brand or person in Latin letters, use that spelling.
    If OCR and STT disagree about a shop or place name and neither is clearly
    legible, use the OCR spelling and add the detail "상호 표기 확인 필요" citing
-   both units.
+   both units. Never transliterate a Latin brand into Korean yourself: when one
+   unit shows "[DEMOOR]" and another shows "드무어", write "드무어"; when only the
+   Latin spelling appears, keep the Latin spelling.
 
 B. COMPLETENESS. Before writing targets, count the items the video announces:
    from the source title (for example "BEST6", "5가지"), from ordinal words in
    STT (첫 번째 ... 다섯 번째, 마지막으로) and from numbered on-screen headings.
    Create one target per announced item, in video order, scanning the whole
-   timeline including its last seconds. If an announced item has only weak
+   timeline including its last seconds. Products shown only for contrast or
+   comparison (for example "비싼 제품 사이에서 발견한") are not targets; the targets are
+   the items introduced by the video's own numbering or ordinals. If an announced item has only weak
    evidence, still create it with the name and details that the evidence supports.
 
 C. REQUIRED FIELDS. For each product target, write the name as "브랜드 상품명"
    when a brand unit appears within two seconds of the name unit, and include the
-   price when OCR shows it, written as "영상 표시 가격 N원". Product features
+   price when OCR shows it, written simply as "가격 N원". Never add wording such
+   as "영상에서 확인된 가격은" or "영상 표시 가격": the app already labels the
+   summary as video-based and shows external verification separately. Product features
    spoken or shown on screen must stay in the details as well; a price never
    replaces them. For recipes include every quantity and time that is stated. For
    exercises include repetitions or seconds. Copy numbers and units exactly as
@@ -497,7 +560,16 @@ I. CLAIM FORMAT. Every claim must name the specific product, place, tool or pers
    it is about; never write a claim about "the cafe" or "the course" without its
    name. Recipe quantities, workout repetitions, rankings and the creator's
    opinions are not verifiable claims (set verifiable to false). Never put a detail
-   in a claim that no evidence unit states.
+   in a claim that no evidence unit states. Claims exist only for objective facts
+   that a web search can confirm: an address or area, a route or transport, a
+   price, a date or period, opening hours, an official name. Skip common
+   knowledge that needs no checking (for example that a famous mountain is in
+   Seoul). State the claim as
+   that plain fact. Evaluative wording ("가장 좋다", "접근성이 좋다", "맛있다",
+   "유명하다", "추천") is never a claim: leave verifiable false. Write searchQuery
+   as 2-5 keywords: the proper noun plus the attribute, for example
+   "서울국제정원박람회 기간". Write a price claim as "<브랜드 상품명>의 가격은 N원이다"
+   with no wording such as "영상에서" or "표시되었습니다".
 
 H. ITEM COUNT. Fill announcedItemCount first with the number of items the video
    announces (rule B), or 0 if it announces none. Then output at least that many
@@ -539,6 +611,32 @@ def _price_is_grounded(detail: dict, evidence_by_id: dict[str, dict]) -> bool:
     return all(_digits(price) and _digits(price) in cited for price in prices)
 
 
+MIN_FAITHFULNESS = 0.33
+
+
+def _bigrams(text: str) -> set[str]:
+    compact = re.sub(r"[^가-힣a-z0-9]", "", str(text).lower())
+    return {compact[i:i + 2] for i in range(len(compact) - 1)}
+
+
+def _detail_is_faithful(detail: dict, evidence_by_id: dict[str, dict]) -> bool:
+    """Reject a detail whose wording shares almost nothing with the units it cites.
+
+    Citing a real unit ID does not make a sentence true: "접근성이 좋고" came back as
+    "대중교통으로 가기 좋고" (overlap 0.29) while honest paraphrases score 0.37 or more.
+    Short texts (prices, names) are not judged this way.
+    """
+    wanted = _bigrams(detail["text"])
+    if len(wanted) < 8:
+        return True
+    cited = set()
+    for ref in detail["evidenceIds"]:
+        cited |= _bigrams(evidence_by_id.get(ref, {}).get("text", ""))
+    if not cited:  # nothing to compare against
+        return True
+    return len(wanted & cited) / len(wanted) >= MIN_FAITHFULNESS
+
+
 def _label_promotional_claim(detail: dict) -> dict:
     text = detail["text"]
     if PROMO_PATTERN.search(text) and not text.startswith(CLAIM_PREFIX):
@@ -574,6 +672,33 @@ def _drop_details_repeating_steps(details: list[dict], steps: list[dict]) -> lis
         if not repeated:
             kept.append(detail)
     return kept
+
+
+def _render_numbered_summary(targets: list[dict], global_steps: list[dict]) -> str:
+    """One consistent layout: numbered items in video order, bullets underneath.
+
+    Several targets: "1. name" followed by bullets (details, then any steps, since
+    the numbering already carries the order). One target: its name, bullet details,
+    then its steps as a numbered sequence. The same sequence is never repeated as a
+    separate "전체 순서" block.
+    """
+    sections: list[str] = []
+    many = len(targets) > 1
+    for index, target in enumerate(targets, 1):
+        steps = list(target["steps"])
+        if not many and not steps:
+            steps = list(global_steps)  # a lone item owns the shared sequence
+        details = _drop_details_repeating_steps(target["details"], steps)
+        lines = [f"{index}. {target['name']}" if many else target["name"]]
+        lines.extend(f"- {detail['text']}" for detail in details)
+        if many:
+            lines.extend(f"- {step['text']}" for step in steps)
+        else:
+            lines.extend(f"{i}. {step['text']}" for i, step in enumerate(steps, 1))
+        sections.append("\n".join(lines))
+    if not targets and global_steps:
+        sections.append("\n".join(f"{i}. {step['text']}" for i, step in enumerate(global_steps, 1)))
+    return "\n\n".join(sections)
 
 
 def _normalize_result(
@@ -647,7 +772,8 @@ def _normalize_result(
         content_type = "OTHER"
 
     claims = _normalize_claims(
-        result.get("claims", [])
+        result.get("claims", []),
+        objective_only=strict,
     )
 
     if _is_generic_title(title):
@@ -702,6 +828,8 @@ def _normalize_result(
             if not isinstance(values, list):
                 return []
             items = [item for raw in values if (item := normalize_grounded(raw))][:20]
+            if strict:
+                items = [item for item in items if _detail_is_faithful(item, evidence_by_id)]
             if strict and key == "details":
                 items = [_label_promotional_claim(item) for item in items if _price_is_grounded(item, evidence_by_id)]
             return items
@@ -710,21 +838,25 @@ def _normalize_result(
 
     # Keep the summary compact; evidence/verification status remains available
     # separately so clients can label these as video claims, not proven facts.
-    sections = []
-    for target in targets:
-        lines = [target["name"]]
-        shown_details = (
-            _drop_details_repeating_steps(target["details"], target["steps"])
-            if dedupe_details else target["details"]
-        )
-        lines.extend(f"- {detail['text']}" for detail in shown_details)
-        lines.extend(f"{i}. {step['text']}" for i, step in enumerate(target["steps"], 1))
-        sections.append("\n".join(lines))
-    if global_steps:
-        lines = ["전체 순서"] if targets else []
-        lines.extend(f"{i}. {step['text']}" for i, step in enumerate(global_steps, 1))
-        sections.append("\n".join(lines))
-    summary = "\n\n".join(sections) or "영상에서 확인할 수 있는 항목별 근거가 부족합니다. 원본을 확인해 주세요."
+    if strict:
+        summary = _render_numbered_summary(targets, global_steps)
+    else:
+        sections = []
+        for target in targets:
+            lines = [target["name"]]
+            shown_details = (
+                _drop_details_repeating_steps(target["details"], target["steps"])
+                if dedupe_details else target["details"]
+            )
+            lines.extend(f"- {detail['text']}" for detail in shown_details)
+            lines.extend(f"{i}. {step['text']}" for i, step in enumerate(target["steps"], 1))
+            sections.append("\n".join(lines))
+        if global_steps:
+            lines = ["전체 순서"] if targets else []
+            lines.extend(f"{i}. {step['text']}" for i, step in enumerate(global_steps, 1))
+            sections.append("\n".join(lines))
+        summary = "\n\n".join(sections)
+    summary = summary or "영상에서 확인할 수 있는 항목별 근거가 부족합니다. 원본을 확인해 주세요."
 
     announced = result.get("announcedItemCount")
     announced = announced if isinstance(announced, int) and not isinstance(announced, bool) and announced > 0 else 0
@@ -792,12 +924,16 @@ def postprocess_with_llm(
     ).strip()
 
     prompt_evidence = evidence_units or []
-    if len(prompt_evidence) > 200:
+    # Vision-read card lines raised the unit count past 200 for list videos, and the
+    # even sampling below then dropped whole product cards (a 5-item video came back
+    # with 3 items). 450 units is still only a few thousand tokens.
+    max_units = int(os.getenv("MAX_PROMPT_EVIDENCE_UNITS", "450"))
+    if len(prompt_evidence) > max_units:
         # STT precedes OCR in the saved data. Keep evidence from across the video
         # instead of dropping the later OCR when the combined input exceeds the budget.
         by_time = sorted(prompt_evidence, key=lambda unit: unit.get("timeMs", unit.get("startMs")) or 0)
         last_index = len(by_time) - 1
-        prompt_evidence = [by_time[index * last_index // 199] for index in range(200)]
+        prompt_evidence = [by_time[index * last_index // (max_units - 1)] for index in range(max_units)]
 
     input_data = {
         "primary_evidence": {
@@ -992,7 +1128,8 @@ INPUT DATA:
 
     client = create_gemini_client()
 
-    response = client.models.generate_content(
+    response = _generate_with_retry(
+        client,
         model=GEMINI_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(

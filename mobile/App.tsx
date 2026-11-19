@@ -3765,21 +3765,38 @@ export default function App() {
     const savedSummary = detailItem.summary;
     const compactText = (value: string) => value.replace(/\s+/g, ' ').trim();
     const normalizedSummary = compactText(savedSummary);
+    // Newer analyses store {text, evidenceIds}; older ones stored plain strings.
+    const textOfItem = (item: any): string[] => {
+      const value = typeof item === 'string' ? item : item?.text;
+      return typeof value === 'string' && value.trim() ? [value.trim()] : [];
+    };
     const missingSteps = (value: unknown): string[] => {
       if (!Array.isArray(value)) return [];
-      const steps = value.flatMap(step =>
-        typeof step?.text === 'string' && step.text.trim()
-          ? [step.text.trim()] : [],
-      );
+      const steps = value.flatMap(textOfItem);
       return steps.every(step => normalizedSummary.includes(compactText(step))) ? [] : steps;
     };
     const missingSections: string[] = [];
-    if (!detailRawContent?.userEdited) {
+    // Older analyses saved a one-sentence summary while the per-target details
+    // stayed only in structuredAnalysis. Itemized summaries already list them.
+    const isItemizedSummary = /\n\s*(?:-|\d+\.)\s/.test(savedSummary);
+    const detailTexts = (value: unknown): string[] =>
+      Array.isArray(value) ? value.flatMap(textOfItem) : [];
+    // structured_v2 summaries are already complete and numbered; do not append again.
+    if (
+      !detailRawContent?.userEdited
+      && structuredDetail?.promptVariant !== 'structured_v2'
+      && structuredDetail?.summaryLayout !== 'numbered'
+    ) {
       if (Array.isArray(structuredDetail?.targets)) {
         for (const target of structuredDetail.targets) {
           const steps = missingSteps(target?.steps);
-          if (typeof target?.name === 'string' && target.name.trim() && steps.length) {
-            missingSections.push([target.name, ...steps.map((step, i) => `${i + 1}. ${step}`)].join('\n'));
+          const details = isItemizedSummary ? [] : detailTexts(target?.details);
+          if (typeof target?.name === 'string' && target.name.trim() && (steps.length || details.length)) {
+            missingSections.push([
+              target.name,
+              ...details.map(detail => `- ${detail}`),
+              ...steps.map((step, i) => `${i + 1}. ${step}`),
+            ].join('\n'));
           }
         }
       }
@@ -3795,6 +3812,37 @@ export default function App() {
     )
       ? structuredDetail.factChecks
       : [];
+    // 틀린 정보만 '확인할 내용'에 두고, 맞는 정보는 '추가 정보'로 보여준다.
+    const wrongFactChecks = detailFactChecks.filter(
+      (check: any) =>
+        !check?.error &&
+        ['CONFLICTING', 'PARTIALLY_SUPPORTED'].includes(
+          String(check?.verdict ?? '').toUpperCase(),
+        ),
+    );
+    const confirmedFactChecks = detailFactChecks.filter(
+      (check: any) =>
+        !check?.error && String(check?.verdict ?? '').toUpperCase() === 'SUPPORTED',
+    );
+    const relatedLinks: any[] = Array.isArray(structuredDetail?.relatedLinks)
+      ? structuredDetail.relatedLinks.filter((link: any) => link?.url)
+      : [];
+    const factVerdictLabel = (check: any): string => {
+      if (check?.error) return '확인 실패';
+      switch (String(check?.verdict ?? '').toUpperCase()) {
+        case 'SUPPORTED': return '확인됨';
+        case 'PARTIALLY_SUPPORTED': return '일부 확인';
+        case 'CONFLICTING': return '다름';
+        default: return '근거 부족';
+      }
+    };
+    const factVerdictStyle = (check: any) => {
+      const verdict = String(check?.verdict ?? '').toUpperCase();
+      if (check?.error) return styles.factVerdictMuted;
+      if (verdict === 'SUPPORTED') return styles.factVerdictOk;
+      if (verdict === 'CONFLICTING') return styles.factVerdictWarn;
+      return styles.factVerdictMuted;
+    };
     const verificationStatus = String(
       structuredDetail?.verificationStatus ?? '',
     ).toUpperCase();
@@ -3814,24 +3862,11 @@ export default function App() {
         ...(contentQuality?.warnings ?? []).map((warning) =>
           qualityMessage(warning.type),
         ),
-        ...detailFactChecks
-          .filter((check: any) =>
-            ['CONFLICTING', 'PARTIALLY_SUPPORTED', 'INSUFFICIENT_EVIDENCE'].includes(
-              String(check?.verdict ?? '').toUpperCase(),
-            ),
-          )
-          .map((check: any) => {
-            const verdict = String(
-              check?.verdict ?? '',
-            ).toUpperCase();
-            if (verdict === 'CONFLICTING') {
-              return '외부 근거와 내용이 다른 정보가 있어요.';
-            }
-            if (verdict === 'PARTIALLY_SUPPORTED') {
-              return '일부 내용만 확인됐어요.';
-            }
-            return '충분한 근거를 찾지 못한 정보가 있어요.';
-          }),
+        ...wrongFactChecks.map((check: any) =>
+          String(check?.verdict ?? '').toUpperCase() === 'CONFLICTING'
+            ? '외부 근거와 내용이 다른 정보가 있어요.'
+            : '일부 내용만 확인됐어요.',
+        ),
         ...(verificationCorrections.length > 0
           ? ['확인 과정에서 수정된 정보가 있어요.']
           : []),
@@ -3843,9 +3878,6 @@ export default function App() {
 
     const needsEvidenceReview =
       Boolean(contentQuality?.requiresReview) ||
-      ['PARTIALLY_VERIFIED', 'INSUFFICIENT_EVIDENCE'].includes(
-        verificationStatus,
-      ) ||
       evidenceReviewMessages.length > 0;
 
     // SAVEON_FINAL_UX_NAV_V1: back label reflects the actual preserved view.
@@ -4373,6 +4405,53 @@ export default function App() {
                   </View>
                 )}
 
+                {wrongFactChecks.length > 0 && (
+                  <View style={styles.factCheckList}>
+                    <Text style={styles.evidenceSourceLabel}>
+                      확인이 필요한 정보
+                    </Text>
+                    {wrongFactChecks.slice(0, 5).map((check: any, index: number) => (
+                      <View
+                        key={`${index}-${String(check?.claim ?? '')}`}
+                        style={styles.factCheckItem}
+                      >
+                        <View style={styles.factCheckHead}>
+                          <Text style={[styles.factVerdict, factVerdictStyle(check)]}>
+                            {factVerdictLabel(check)}
+                          </Text>
+                          <Text style={styles.factCheckClaim}>
+                            {String(check?.claim ?? '')}
+                          </Text>
+                        </View>
+                        {Boolean(check?.explanation) && (
+                          <Text style={styles.factCheckExplanation}>
+                            {String(check.explanation)}
+                          </Text>
+                        )}
+                        {(Array.isArray(check?.sources) ? check.sources : [])
+                          .slice(0, 3)
+                          .map((source: any, sourceIndex: number) => (
+                            <Pressable
+                              key={`${sourceIndex}-${String(source?.url ?? '')}`}
+                              onPress={() => {
+                                if (source?.url) Linking.openURL(String(source.url));
+                              }}
+                            >
+                              <Text style={styles.factCheckSource} numberOfLines={1}>
+                                {String(source?.title || source?.url || '')}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        {Boolean(check?.checkedAt) && (
+                          <Text style={styles.factCheckDate}>
+                            확인일 {String(check.checkedAt)}
+                          </Text>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                )}
+
                 <Text style={styles.evidenceSourceLabel}>
                   출처 보기
                 </Text>
@@ -4389,7 +4468,7 @@ export default function App() {
                     </Text>
                   </View>
 
-                  {detailFactChecks.length > 0 && (
+                  {wrongFactChecks.length > 0 && (
                     <View style={styles.evidenceSourceChip}>
                       <Ionicons
                         name="shield-checkmark-outline"
@@ -4461,6 +4540,42 @@ export default function App() {
                     </Pressable>
                   )}
                 </View>
+              </View>
+            )}
+
+            {(confirmedFactChecks.length > 0 || relatedLinks.length > 0) && (
+              <View style={styles.factCheckList}>
+                <Text style={styles.evidenceSourceLabel}>추가 정보</Text>
+                {confirmedFactChecks.slice(0, 5).map((check: any, index: number) => (
+                  <View key={`ok-${index}-${String(check?.claim ?? '')}`} style={styles.factCheckItem}>
+                    <View style={styles.factCheckHead}>
+                      <Text style={[styles.factVerdict, styles.factVerdictOk]}>확인됨</Text>
+                      <Text style={styles.factCheckClaim}>{String(check?.claim ?? '')}</Text>
+                    </View>
+                    {(Array.isArray(check?.sources) ? check.sources : []).slice(0, 2).map(
+                      (source: any, sourceIndex: number) => (
+                        <Pressable
+                          key={`ok-${index}-${sourceIndex}`}
+                          onPress={() => source?.url && Linking.openURL(String(source.url))}
+                        >
+                          <Text style={styles.factCheckSource} numberOfLines={1}>
+                            {String(source?.title || source?.url || '')}
+                          </Text>
+                        </Pressable>
+                      ),
+                    )}
+                  </View>
+                ))}
+                {relatedLinks.slice(0, 5).map((link: any, index: number) => (
+                  <Pressable
+                    key={`link-${index}-${String(link.url)}`}
+                    onPress={() => Linking.openURL(String(link.url))}
+                  >
+                    <Text style={styles.factCheckSource} numberOfLines={1}>
+                      {`[${String(link.kind ?? '링크')}] ${String(link.title || link.url)}`}
+                    </Text>
+                  </Pressable>
+                ))}
               </View>
             )}
 
@@ -5809,6 +5924,64 @@ const styles = StyleSheet.create({
     color: '#755013',
     fontSize: 11,
     lineHeight: 17,
+  },
+  factCheckList: {
+    marginTop: 4,
+  },
+  factCheckItem: {
+    marginBottom: 9,
+    padding: 10,
+    gap: 5,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#EEDFC0',
+  },
+  factCheckHead: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+  },
+  factVerdict: {
+    overflow: 'hidden',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  factVerdictOk: {
+    color: '#0B6B3A',
+    backgroundColor: '#DDF5E7',
+  },
+  factVerdictWarn: {
+    color: '#9A2B1E',
+    backgroundColor: '#FDE3DF',
+  },
+  factVerdictMuted: {
+    color: '#6B5B3A',
+    backgroundColor: '#F4EBD6',
+  },
+  factCheckClaim: {
+    flex: 1,
+    color: theme.text,
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  factCheckExplanation: {
+    color: '#755013',
+    fontSize: 10,
+    lineHeight: 15,
+  },
+  factCheckSource: {
+    color: theme.primary,
+    fontSize: 10,
+    textDecorationLine: 'underline',
+  },
+  factCheckDate: {
+    color: '#8A7A55',
+    fontSize: 9,
   },
   evidenceSourceLabel: {
     marginTop: 13,

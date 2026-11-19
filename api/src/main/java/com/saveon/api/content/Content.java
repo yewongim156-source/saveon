@@ -225,6 +225,20 @@ public class Content {
     }
 
 
+    /**
+     * 재분석이 임시 오류(모델 과부하 등)로 대체 결과만 내놓았을 때,
+     * 이전에 저장된 분석 결과를 그대로 두고 완료 상태로 되돌린다.
+     */
+    public boolean keepPreviousAnalysis() {
+        if (this.summary == null || this.summary.isBlank()) {
+            return false;
+        }
+
+        this.status = ContentStatus.COMPLETED;
+        return true;
+    }
+
+
     public void setEmbedding(
             float[] embedding,
             String embeddingModel,

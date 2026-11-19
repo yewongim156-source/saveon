@@ -178,7 +178,13 @@ def verify_structured_claims(structured: dict) -> dict:
             ) as step:
                 if FACT_CHECK_ENGINE == "search":
                     from services.search_verification import verify_claim_by_search
-                    checked = verify_claim_by_search(claim)
+                    # On-screen text lets the search also try the spellings the video used.
+                    context = {
+                        **(structured.get("verificationContext") or {}),
+                        "ocrTexts": [str(unit.get("text", "")) for unit in (structured.get("ocrEvidence") or [])
+                                     if isinstance(unit, dict)][:200],
+                    }
+                    checked = verify_claim_by_search(claim, context)
                 else:
                     checked = _verify_claim(claim)
                 checks.append(checked)
@@ -193,7 +199,8 @@ def verify_structured_claims(structured: dict) -> dict:
                 "claimType": claim.get("type", "OTHER"),
                 "verdict": "INSUFFICIENT_EVIDENCE",
                 "confidence": 0.0,
-                "explanation": "검색 근거를 확인하지 못했습니다.",
+                "error": "VERIFICATION_ERROR",
+                "explanation": "검증 과정에서 오류가 나서 확인하지 못했습니다. 근거가 없다는 뜻이 아닙니다.",
                 "sources": [],
             })
 

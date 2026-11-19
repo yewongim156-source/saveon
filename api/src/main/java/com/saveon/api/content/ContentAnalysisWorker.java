@@ -32,6 +32,16 @@ public class ContentAnalysisWorker {
     }
 
 
+    static boolean isFallbackResult(
+            String structuredJson
+    ) {
+        return structuredJson != null
+                && structuredJson.matches(
+                "(?s).*\"analysisQuality\"\\s*:\\s*\"FALLBACK\".*"
+        );
+    }
+
+
     @Async("aiTaskExecutor")
     public void analyzeUrl(
             Long contentId
@@ -76,6 +86,19 @@ public class ContentAnalysisWorker {
                                                             + contentId
                                             )
                             );
+
+            // 모델 과부하 등으로 AI가 대체(fallback) 결과만 돌려줬다면,
+            // 이미 저장된 좋은 요약을 빈 문구로 덮어쓰지 않는다.
+            if (isFallbackResult(result.structuredJson())
+                    && latest.keepPreviousAnalysis()) {
+                contentRepository.save(latest);
+
+                System.out.println(
+                        "⚠️ 재분석이 대체 결과여서 기존 분석을 유지: contentId="
+                                + contentId
+                );
+                return;
+            }
 
             latest.completeAnalysis(
                     result.title(),

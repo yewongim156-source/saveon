@@ -10,7 +10,7 @@ from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from services.embedding_service import embed_text
-from services.llm_postprocessor import postprocess_with_llm
+from services.llm_postprocessor import default_prompt_variant, postprocess_with_llm
 from services.summary_review import review_summary, suggest_examples
 from services.video_pipeline import analyze_video_file
 from services.telemetry import pipeline_step, trace_session
@@ -43,7 +43,7 @@ app = FastAPI(
 class AnalyzeRequest(BaseModel):
     sourceUrl: str
     thumbnailRequested: bool = False  # rights confirmed by the user
-    promptVariant: Literal["baseline", "few_shot_v1", "structured_v2"] = "baseline"
+    promptVariant: Literal["baseline", "few_shot_v1", "structured_v2"] = Field(default_factory=default_prompt_variant)
 
 
 class AnalyzeResponse(BaseModel):
@@ -361,7 +361,7 @@ async def analyze_video(file: UploadFile = File(...)):
                         shutil.copyfileobj(file.file, output)
                     step.set_output({"fileType": suffix.lower()})
 
-                result = analyze_video_file(video_path)
+                result = analyze_video_file(video_path, prompt_variant=default_prompt_variant())
                 return AnalyzeResponse(**result)
 
             except Exception as exc:
@@ -405,7 +405,7 @@ async def analyze_video_raw(
                     f"{filename} / {len(data)} bytes"
                 )
 
-                result = analyze_video_file(video_path)
+                result = analyze_video_file(video_path, prompt_variant=default_prompt_variant())
 
                 return AnalyzeResponse(**result)
 

@@ -2,6 +2,7 @@ package com.saveon.api.content.connection;
 
 import com.saveon.api.content.Content;
 import com.saveon.api.content.ContentRepository;
+import com.saveon.api.content.ContentSourceIdentity;
 import com.saveon.api.content.ContentStatus;
 import com.saveon.api.content.connection.dto.ContentBundleResponse;
 import com.saveon.api.content.connection.dto.ContentActionFactResponse;
@@ -70,6 +71,47 @@ public class ContentConnectionService {
     }
 
 
+    /**
+     * 분석이 끝난 콘텐츠를 원본 영상(URL) 기준으로 하나씩만 돌려준다.
+     * 같은 영상을 여러 번 저장했다면 가장 최근에 저장한 항목이 대표가 된다.
+     * 저장된 콘텐츠 자체는 수정하거나 삭제하지 않는다.
+     */
+    private List<Content> uniqueCompletedSources() {
+        List<Content> completed = new ArrayList<>();
+
+        for (Content content : contentRepository.findAll()) {
+            if (content.getStatus() == ContentStatus.COMPLETED) {
+                completed.add(content);
+            }
+        }
+
+        completed.sort(
+                Comparator.comparing(
+                        Content::getId,
+                        Comparator.nullsFirst(
+                                Comparator.<Long>naturalOrder()
+                        )
+                ).reversed()
+        );
+
+        Set<String> seenSources = new HashSet<>();
+        List<Content> unique = new ArrayList<>();
+
+        for (Content content : completed) {
+            if (seenSources.add(
+                    ContentSourceIdentity.key(
+                            content.getSourceUrl(),
+                            content.getId()
+                    )
+            )) {
+                unique.add(content);
+            }
+        }
+
+        return unique;
+    }
+
+
     public List<ContentConnectionResponse> findConnections(
             String requestedType,
             Integer requestedLimit
@@ -91,12 +133,8 @@ public class ContentConnectionService {
         Map<String, ConnectionAccumulator> groups =
                 new HashMap<>();
 
-        for (Content content : contentRepository.findAll()) {
-            if (content.getStatus()
-                    != ContentStatus.COMPLETED) {
-                continue;
-            }
-
+        // 같은 영상을 여러 번 저장했어도 근거는 1개로 센다.
+        for (Content content : uniqueCompletedSources()) {
             Set<String> seenInContent =
                     new HashSet<>();
 
@@ -216,12 +254,7 @@ public class ContentConnectionService {
         List<Content> matches =
                 new ArrayList<>();
 
-        for (Content content : contentRepository.findAll()) {
-            if (content.getStatus()
-                    != ContentStatus.COMPLETED) {
-                continue;
-            }
-
+        for (Content content : uniqueCompletedSources()) {
             boolean matched =
                     extractStructuredData(content)
                             .entities()
