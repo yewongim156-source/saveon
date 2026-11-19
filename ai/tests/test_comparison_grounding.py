@@ -109,18 +109,109 @@ class SavedComparisonEvidenceTests(unittest.TestCase):
         result = ground_comparison_results({"objectiveDisagreements": [obj]}, contexts)
         self.assertEqual(result["objectiveDisagreements"], [])
 
+    @staticmethod
+    def product_context(cid, title, summary, name="클리오 킬커버 메쉬 블러 쿠션", **extra):
+        return {"contentId": cid, "title": title, "summary": summary,
+                "entityDetails": [{"name": name, "type": "PRODUCT", "confidence": 0.95}],
+                **extra}
+
     def test_objective_disagreement_needs_distinct_explicit_values(self):
+        name = "클리오 킬커버 메쉬 블러 쿠션"
         contexts = [
-            {"contentId": 30, "summary": "가격 36000원"},
-            {"contentId": 31, "summary": "가격 38000원"},
+            self.product_context(30, name, "가격 36000원"),
+            self.product_context(31, name, "가격 38000원"),
         ]
-        obj = {"field": "PRICE", "label": "가격", "values": ["36000원", "38000원"],
+        obj = {"field": "PRICE", "label": "가격", "entity": name,
+               "values": ["36000원", "38000원"],
                "evidences": [evidence(30, "가격 36000원"), evidence(31, "가격 38000원")]}
         result = ground_comparison_results({"objectiveDisagreements": [obj]}, contexts)
         self.assertEqual(len(result["objectiveDisagreements"]), 1)
         obj["evidences"][1]["quote"] = "전컬러 발색 리뷰"
         result = ground_comparison_results({"objectiveDisagreements": [obj]}, contexts)
         self.assertEqual(result["objectiveDisagreements"], [])
+
+    def test_daiso_different_products_not_price_conflict(self):
+        contexts = [
+            {"contentId": 40, "title": "다이소 수납함", "summary": "가격 5000원",
+             "entityDetails": [{"name": "다이소", "type": "BRAND"},
+                               {"name": "다이소 수납함", "type": "PRODUCT"}]},
+            {"contentId": 41, "title": "다이소 립밤", "summary": "가격 3000원",
+             "entityDetails": [{"name": "다이소", "type": "BRAND"},
+                               {"name": "다이소 립밤", "type": "PRODUCT"}]},
+        ]
+        obj = {"field": "PRICE", "label": "가격", "entity": "다이소",
+               "values": ["5000원", "3000원"],
+               "evidences": [evidence(40, "가격 5000원"), evidence(41, "가격 3000원")]}
+        result = ground_comparison_results({"objectiveDisagreements": [obj]}, contexts)
+        self.assertEqual(result["objectiveDisagreements"], [])
+        # Even a second-pass semantic auditor saying True cannot establish a
+        # contradiction between unrelated items from the same retailer.
+        raw = {"disagreements": [
+            {"topic": "가격", "statement": "다이소의 가격이 엇갈려요.",
+             "evidences": obj["evidences"]}]}
+        result = ground_comparison_results(raw, contexts, semantic_audit=admit_all)
+        self.assertEqual(result["disagreements"], [])
+
+    def test_price_without_named_product_fails_closed(self):
+        contexts = [{"contentId": 30, "title": "추천템", "summary": "가격 5000원"},
+                    {"contentId": 31, "title": "추천템", "summary": "가격 3000원"}]
+        obj = {"field": "PRICE", "label": "가격", "entity": "다이소",
+               "values": ["5000원", "3000원"],
+               "evidences": [evidence(30, "가격 5000원"), evidence(31, "가격 3000원")]}
+        self.assertEqual(ground_comparison_results({"objectiveDisagreements": [obj]}, contexts)["objectiveDisagreements"], [])
+
+    def test_ocr_only_is_not_verified_price(self):
+        name = "클리오 킬커버 메쉬 블러 쿠션"
+        contexts = [
+            self.product_context(30, name, "가격 36000원", videoObservations=[
+                {"kind": "OCR_UNVERIFIED", "source": "OCR", "quote": "가격 36000원"}]),
+            self.product_context(31, name, "가격 38000원", videoObservations=[
+                {"kind": "OCR_UNVERIFIED", "source": "OCR", "quote": "가격 38000원"}]),
+        ]
+        obj = {"field": "PRICE", "label": "가격", "entity": name,
+               "values": ["36000원", "38000원"],
+               "evidences": [evidence(30, "가격 36000원"), evidence(31, "가격 38000원")]}
+        self.assertEqual(ground_comparison_results({"objectiveDisagreements": [obj]}, contexts)["objectiveDisagreements"], [])
+        contexts[0]["videoObservations"] = [{"kind": "DIRECT_STATEMENT", "source": "STT", "quote": "가격 36000원"}]
+        contexts[1]["videoObservations"] = [{"kind": "DIRECT_STATEMENT", "source": "DESCRIPTION", "quote": "가격 38000원"}]
+        self.assertEqual(len(ground_comparison_results({"objectiveDisagreements": [obj]}, contexts)["objectiveDisagreements"]), 1)
+
+    def test_different_product_variants_not_price_conflict(self):
+        name = "클리오 킬커버 메쉬 블러 쿠션"
+        contexts = [self.product_context(30, name + " 10g", "가격 36000원"),
+                    self.product_context(31, name + " 20g", "가격 38000원")]
+        obj = {"field": "PRICE", "label": "가격", "entity": name,
+               "values": ["36000원", "38000원"],
+               "evidences": [evidence(30, "가격 36000원"), evidence(31, "가격 38000원")]}
+        self.assertEqual(ground_comparison_results({"objectiveDisagreements": [obj]}, contexts)["objectiveDisagreements"], [])
+
+    def test_unlabeled_number_is_not_a_product_price(self):
+        name = "클리오 킬커버 메쉬 블러 쿠션"
+        contexts = [self.product_context(30, name, "가격 36000원"),
+                    self.product_context(31, name, "조회수 1059439")]
+        obj = {"field": "PRICE", "label": "가격", "entity": name,
+               "values": ["36000원", "1059439"],
+               "evidences": [evidence(30, "가격 36000원"), evidence(31, "조회수 1059439")]}
+        self.assertEqual(ground_comparison_results({"objectiveDisagreements": [obj]}, contexts)["objectiveDisagreements"], [])
+
+    def test_price_label_does_not_apply_to_unrelated_view_count(self):
+        name = "클리오 킬커버 메쉬 블러 쿠션"
+        contexts = [self.product_context(30, name, "가격 5000원 조회수 1059439"),
+                    self.product_context(31, name, "가격 3000원 조회수 989898")]
+        obj = {"field": "PRICE", "label": "가격", "entity": name,
+               "values": ["5000원", "1059439"],
+               "evidences": [evidence(30, "가격 5000원 조회수 1059439"),
+                             evidence(31, "가격 3000원 조회수 989898")]}
+        self.assertEqual(ground_comparison_results({"objectiveDisagreements": [obj]}, contexts)["objectiveDisagreements"], [])
+
+    def test_duplicate_price_conflicts_are_collapsed(self):
+        name = "클리오 킬커버 메쉬 블러 쿠션"
+        contexts = [self.product_context(30, name, "가격 36000원"),
+                    self.product_context(31, name, "가격 38000원")]
+        obj = {"field": "PRICE", "label": "가격", "entity": name,
+               "values": ["36000원", "38000원"],
+               "evidences": [evidence(30, "가격 36000원"), evidence(31, "가격 38000원")]}
+        self.assertEqual(len(ground_comparison_results({"objectiveDisagreements": [obj, obj]}, contexts)["objectiveDisagreements"]), 1)
 
 
 if __name__ == "__main__":

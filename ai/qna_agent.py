@@ -10,6 +10,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 from services.comparison_grounding import ground_comparison_results
+from services.conflict_grounding import filter_detected_conflicts
 
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
@@ -440,6 +441,11 @@ Return ONLY genuine contradictions between different saved contents.
                 "Do NOT mark complementary facts, different branches, different dates/conditions, opinions, vague wording, "
                 "or merely different levels of detail as contradictions. "
                 "Be conservative: when context is insufficient, return no conflict. "
+                "A shared retailer or brand (such as Daiso) does NOT imply a shared product. "
+                "Price contradictions require clearly identified identical products, including variants, "
+                "and explicit currency-labelled values in the supplied claim texts. "
+                "Two different products at 5000 and 3000 won are NOT contradictory. "
+                "Never interpret unrelated OCR numbers or view counts as verified prices. "
                 "Use only the supplied claims. Do not use web knowledge. "
                 "For each conflict, cite exactly the content IDs and claim texts that conflict. "
                 "title and description must be concise natural Korean for end users. "
@@ -498,7 +504,9 @@ Return ONLY genuine contradictions between different saved contents.
     allowed_ids = {claim.contentId for claim in claims}
     result: list[ConflictItemOutput] = []
 
-    for item in parsed.get("conflicts", [])[:10]:
+    # Fail-closed factual grounding before promoting AI-detected clashes into alerts.
+    grounded = filter_detected_conflicts(parsed.get("conflicts", []), compact)
+    for item in grounded[:10]:
         evidences = []
         seen_ids = set()
 
@@ -864,7 +872,16 @@ Return:
    useful information that appears in only one saved video.
 4. objectiveDisagreements:
    only when at least 2 DIFFERENT videos contain DIFFERENT explicit values
-   for the same objective field.
+   for the same objective field AND THE EXACT SAME REFERENT.
+   For PRICE the referent must be a specifically NAMED SAME PRODUCT, not
+   a brand/store (e.g. Daiso), not a category, and not two different items
+   sold by the same shop. Use the full product name in 'entity'. Confirm
+   the product/model and relevant variant or package size are the same in
+   both saved videos; otherwise omit the price disagreement entirely.
+   A different promotion, discount period, variant or product is NOT an
+   objective contradiction. Bare OCR numbers/views are not product prices.
+   OCR_UNVERIFIED without direct or verified price evidence is insufficient.
+   Emit at most one objective disagreement for each product + field.
 
 Allowed objective fields:
 PRICE, CAPACITY, SIZE, RELEASE_DATE, EVENT_PERIOD, OFFICIAL_NAME,
