@@ -157,6 +157,14 @@ public class ContentConflictService {
                     continue;
                 }
 
+                // Same retailer/brand is not proof of the same priced product.
+                if ("PRICE".equals(a.claimType())
+                        && !PriceConflictValidator.isContradiction(
+                                a.claimText(), a.productNames(),
+                                b.claimText(), b.productNames())) {
+                    continue;
+                }
+
                 if (normalizeText(a.claimText())
                         .equals(normalizeText(b.claimText()))) {
                     continue;
@@ -280,6 +288,13 @@ public class ContentConflictService {
                     continue;
                 }
 
+                // Do not trust an AI-generated PRICE mismatch without
+                // original, exact product-anchored source claims.
+                if ("PRICE".equalsIgnoreCase(item.claimType())
+                        && !supportedAgentPriceConflict(evidences, candidates)) {
+                    continue;
+                }
+
                 result.add(
                         new ContentConflictResponse(
                                 stableKey(
@@ -327,6 +342,31 @@ public class ContentConflictService {
         }
     }
 
+    private boolean supportedAgentPriceConflict(
+            List<ContentConflictEvidenceResponse> evidences,
+            List<ContentClaim> candidates
+    ) {
+        // Two sources and two exact, original currency-labelled claims.
+        if (evidences.size() != 2
+                || evidences.get(0).contentId().equals(evidences.get(1).contentId())) {
+            return false;
+        }
+        List<ContentClaim> originals = new ArrayList<>();
+        for (ContentConflictEvidenceResponse evidence : evidences) {
+            ContentClaim match = candidates.stream()
+                    .filter(claim -> claim.contentId().equals(evidence.contentId())
+                            && normalizeText(claim.claimText())
+                            .equals(normalizeText(evidence.claimText())))
+                    .findFirst().orElse(null);
+            if (match == null) return false;
+            originals.add(match);
+        }
+        return PriceConflictValidator.isContradiction(
+                originals.get(0).claimText(), originals.get(0).productNames(),
+                originals.get(1).claimText(), originals.get(1).productNames()
+        );
+    }
+
     private List<ContentConflictResponse> detectDeterministic(
             List<ContentClaim> candidates
     ) {
@@ -347,6 +387,13 @@ public class ContentConflictService {
                         || !a.claimType().equals(b.claimType())
                         || !a.primarySubject()
                         .equals(b.primarySubject())) {
+                    continue;
+                }
+
+                if ("PRICE".equals(a.claimType())
+                        && !PriceConflictValidator.isContradiction(
+                                a.claimText(), a.productNames(),
+                                b.claimText(), b.productNames())) {
                     continue;
                 }
 
@@ -468,6 +515,9 @@ public class ContentConflictService {
 
         List<ContentClaim> result =
                 new ArrayList<>();
+        List<String> productNames = PriceConflictValidator.namedProducts(
+                structured.get("entityDetails")
+        );
 
         for (Map<String, Object> claim : claims) {
             String text =
@@ -502,7 +552,8 @@ public class ContentConflictService {
                             relatedFactChecks(
                                     text,
                                     factChecks
-                            )
+                            ),
+                            productNames
                     )
             );
         }
@@ -676,32 +727,7 @@ public class ContentConflictService {
     private String extractPrice(
             String text
     ) {
-        Matcher matcher =
-                PRICE_PATTERN.matcher(text);
-
-        if (!matcher.find()) {
-            return "";
-        }
-
-        String digits =
-                matcher.group(1)
-                        .replace(",", "");
-
-        try {
-            long value =
-                    Long.parseLong(digits);
-
-            if (value < 1000) {
-                return "";
-            }
-
-            return String.format(
-                    "%,d원",
-                    value
-            );
-        } catch (NumberFormatException ignored) {
-            return "";
-        }
+        return PriceConflictValidator.formattedPrice(text);
     }
 
     private String extractPercent(
@@ -937,7 +963,8 @@ public class ContentConflictService {
             List<String> subjects,
             String primarySubject,
             String verificationStatus,
-            List<Map<String, Object>> factChecks
+            List<Map<String, Object>> factChecks,
+            List<String> productNames
     ) {
         ContentClaim withPrimarySubject(
                 String value
@@ -950,7 +977,8 @@ public class ContentConflictService {
                     subjects,
                     value,
                     verificationStatus,
-                    factChecks
+                    factChecks,
+                    productNames
             );
         }
     }
