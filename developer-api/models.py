@@ -49,6 +49,21 @@ class EvaluationReview(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class EvaluationAIDraft(Base):
+    __tablename__ = "evaluation_ai_drafts"
+    item_id: Mapped[str] = mapped_column(ForeignKey("evaluation_items.id"), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    gold_revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+
+
+class PromptCandidate(Base):
+    __tablename__ = "evaluation_prompt_candidates"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class TraceSession(Base):
     __tablename__ = "trace_sessions"
 

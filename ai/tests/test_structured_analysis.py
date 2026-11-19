@@ -12,6 +12,79 @@ from services.video_pipeline import build_categories, build_summary, run_timed_o
 
 
 class StructuredAnalysisTests(unittest.TestCase):
+    def test_target_and_global_steps_are_rendered_together(self):
+        evidence = [{"id": "ocr-1"}]
+        step = lambda text: {"text": text, "evidenceIds": ["ocr-1"]}
+        result = _normalize_result({
+            "targets": [
+                {"name": "요리 A", "nameEvidenceIds": ["ocr-1"],
+                 "steps": [step("재료를 썬다"), step("재료를 볶는다")]},
+                {"name": "요리 B", "nameEvidenceIds": ["ocr-1"],
+                 "details": [step("차갑게 먹는 요리")]},
+            ],
+            "globalSteps": [step("완성한 두 요리를 함께 담는다")],
+        }, evidence)
+        self.assertEqual(result["summary"], (
+            "요리 A\n1. 재료를 썬다\n2. 재료를 볶는다\n\n"
+            "요리 B\n- 차갑게 먹는 요리\n\n"
+            "전체 순서\n1. 완성한 두 요리를 함께 담는다"
+        ))
+
+    def test_v2_summary_drops_details_that_repeat_a_step(self):
+        evidence = [{"id": "stt-1"}]
+        item = lambda text: {"text": text, "evidenceIds": ["stt-1"]}
+        target = {
+            "name": "소시지 덮밥", "nameEvidenceIds": ["stt-1"], "type": "RECIPE",
+            "details": [item("버터에 소시지를 굽는다"), item("간장 1스푼, 설탕 0.5스푼")],
+            "steps": [item("소시지를 버터에 굽는다"), item("밥 위에 올린다")],
+        }
+        plain = _normalize_result({"targets": [target]}, evidence)
+        deduped = _normalize_result({"targets": [target]}, evidence, dedupe_details=True)
+        self.assertIn("- 버터에 소시지를 굽는다", plain["summary"])
+        self.assertNotIn("- 버터에 소시지를 굽는다", deduped["summary"])
+        self.assertIn("- 간장 1스푼, 설탕 0.5스푼", deduped["summary"])
+        self.assertEqual(len(deduped["structured"]["targets"][0]["details"]), 2)
+
+    def test_strict_drops_prices_not_found_in_cited_units(self):
+        evidence = [{"id": "ocr-1", "text": "438750"}, {"id": "ocr-2", "text": "드무어 에피 딥브이니트"}]
+        target = {
+            "name": "드무어 에피 딥브이 니트", "nameEvidenceIds": ["ocr-2"], "type": "PRODUCT",
+            "details": [
+                {"text": "영상 표시 가격 38,750원", "evidenceIds": ["ocr-1"]},
+                {"text": "영상 표시 가격 43,750원", "evidenceIds": ["ocr-1"]},
+                {"text": "명치까지 내려오는 V넥", "evidenceIds": ["ocr-2"]},
+            ],
+            "steps": [],
+        }
+        loose = _normalize_result({"targets": [target]}, evidence)
+        strict = _normalize_result({"targets": [target]}, evidence, strict=True)
+        self.assertEqual(len(loose["structured"]["targets"][0]["details"]), 3)
+        texts = [detail["text"] for detail in strict["structured"]["targets"][0]["details"]]
+        self.assertEqual(texts, ["영상 표시 가격 38,750원", "명치까지 내려오는 V넥"])
+
+    def test_strict_labels_promotional_details_and_uses_neutral_source_title(self):
+        evidence = [{"id": "stt-1", "text": "헬스장보다 더한 효과"}]
+        target = {
+            "name": "홈트", "nameEvidenceIds": ["stt-1"], "type": "WORKOUT",
+            "details": [{"text": "효과가 보장되는 운동", "evidenceIds": ["stt-1"]}], "steps": [],
+        }
+        payload = {"title": "헬스장보다 확실한 홈트 모음", "targets": [target]}
+        loose = _normalize_result(payload, evidence, source_title="인생 홈트 모음집")
+        strict = _normalize_result(payload, evidence, source_title="인생 홈트 모음집", strict=True)
+        self.assertEqual(loose["title"], "헬스장보다 확실한 홈트 모음")
+        self.assertEqual(strict["title"], "인생 홈트 모음집")
+        self.assertEqual(strict["structured"]["targets"][0]["details"][0]["text"], "영상 주장: 효과가 보장되는 운동")
+
+    def test_flags_when_fewer_targets_than_announced(self):
+        evidence = [{"id": "ocr-1"}]
+        target = {"name": "A", "nameEvidenceIds": ["ocr-1"], "type": "PRODUCT", "details": [], "steps": []}
+        short = _normalize_result({"announcedItemCount": 6, "targets": [target]}, evidence)
+        full = _normalize_result({"announcedItemCount": 1, "targets": [target]}, evidence)
+        none = _normalize_result({"targets": [target]}, evidence)
+        self.assertEqual((short["structured"]["announcedItemCount"], short["structured"]["itemCountMismatch"]), (6, True))
+        self.assertFalse(full["structured"]["itemCountMismatch"])
+        self.assertNotIn("itemCountMismatch", none["structured"])
+
     def test_ocr_keeps_first_timestamp_and_deduplicates(self):
         import numpy as np
         frame = np.zeros((2, 2, 3), dtype=np.uint8)

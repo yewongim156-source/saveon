@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import closing
 from pathlib import Path
 import os
 import re
-from typing import Iterable
+from typing import Generator, Iterable
 
 import cv2
 import numpy as np
@@ -218,33 +219,34 @@ def sample_frames(video_path: Path, max_frames: int = 6) -> list[np.ndarray]:
     return frames
 
 
-def sample_ocr_frames(video_path: Path, interval_seconds: float = 2.0, max_frames: int = 60) -> list[tuple[int, np.ndarray]]:
+def sample_ocr_frames(
+    video_path: Path, interval_seconds: float = 0.75, max_frames: int = 120,
+) -> Generator[tuple[int, np.ndarray], None, None]:
     capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise RuntimeError("영상 파일을 열 수 없습니다.")
-    total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
-    if total <= 0 or fps <= 0:
+    try:
+        if not capture.isOpened():
+            raise RuntimeError("영상 파일을 열 수 없습니다.")
+        total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
+        if total <= 0 or fps <= 0:
+            return
+        stride = max(1, round(interval_seconds * fps), int(np.ceil(total / max_frames)))
+        for position in range(0, total, stride):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, position)
+            ok, frame = capture.read()
+            if ok and frame is not None:
+                yield round(position * 1000 / fps), frame
+    finally:
         capture.release()
-        return []
-    stride = max(1, round(interval_seconds * fps), int(np.ceil(total / max_frames)))
-    sampled = []
-    for position in range(0, total, stride):
-        capture.set(cv2.CAP_PROP_POS_FRAMES, position)
-        ok, frame = capture.read()
-        if ok and frame is not None:
-            sampled.append((round(position * 1000 / fps), frame))
-    capture.release()
-    return sampled
 
 
-def run_timed_ocr(frames: list[tuple[int, np.ndarray]]) -> list[dict]:
-    if not frames:
-        return []
-    reader = _get_ocr()
+def run_timed_ocr(frames: Iterable[tuple[int, np.ndarray]]) -> list[dict]:
+    reader = None
     found = []
     seen = set()
     for time_ms, frame in frames:
+        if reader is None:
+            reader = _get_ocr()
         lines = reader.readtext(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), detail=0, paragraph=False)
         for line in lines:
             text = " ".join(str(line).split()).strip()
@@ -554,35 +556,32 @@ def analyze_video_file(
         transcript = ""
         transcript_segments = []
 
-    with pipeline_step(
-        "frame-sampling",
-        kind="TOOL",
-    ) as step:
-        frames = sample_frames(video_path)
-        step.set_output({"frameCount": len(frames)})
-
-    # Frames are already needed by OCR/CLIP; never download media a second time.
-    # Only an explicitly authorized Reel enables the optional private preview.
-    thumbnail_base64 = None
-    if thumbnail_requested:
-        try:
-            thumbnail_base64 = frame_thumbnail_base64(frames)
-        except Exception as exc:
-            print(f"[THUMBNAIL] Optional preview skipped: {type(exc).__name__}")
-
+    ocr_interval = float(os.getenv("OCR_INTERVAL_SECONDS", "0.75"))
+    ocr_max_frames = int(os.getenv("OCR_MAX_FRAMES", "120"))
     with pipeline_step(
         "screen-text-ocr",
         kind="TOOL",
         model="easyocr-ko-en",
-        input_summary={"frameCount": len(frames)},
+        input_summary={"intervalSeconds": ocr_interval, "maxFrames": ocr_max_frames},
     ) as step:
-        timed_ocr = run_timed_ocr(sample_ocr_frames(
-            video_path,
-            interval_seconds=float(os.getenv("OCR_INTERVAL_SECONDS", "2")),
-            max_frames=int(os.getenv("OCR_MAX_FRAMES", "60")),
-        ))
+        with closing(sample_ocr_frames(video_path, ocr_interval, ocr_max_frames)) as frames:
+            timed_ocr = run_timed_ocr(frames)
         ocr_lines = [item["text"] for item in timed_ocr]
         step.set_output({"lineCount": len(ocr_lines)})
+
+    needs_vision = not transcript.strip() and not ocr_lines
+    preview_frames = []
+    if needs_vision or thumbnail_requested:
+        with pipeline_step("frame-sampling", kind="TOOL") as step:
+            preview_frames = sample_frames(video_path)
+            step.set_output({"frameCount": len(preview_frames)})
+
+    thumbnail_base64 = None
+    if thumbnail_requested:
+        try:
+            thumbnail_base64 = frame_thumbnail_base64(preview_frames)
+        except Exception as exc:
+            print(f"[THUMBNAIL] Optional preview skipped: {type(exc).__name__}")
 
     with pipeline_step(
         "visual-classification",
@@ -591,10 +590,10 @@ def analyze_video_file(
             "CLIP_MODEL",
             "openai/clip-vit-base-patch32",
         ),
-        input_summary={"frameCount": len(frames)},
+        input_summary={"frameCount": len(preview_frames) if needs_vision else 0},
     ) as step:
-        vision_labels = run_vision(frames)
-        step.set_output({"labels": vision_labels})
+        vision_labels = run_vision(preview_frames) if needs_vision else []
+        step.set_output({"labels": vision_labels, "skipped": not needs_vision})
 
     # SAVEON_VIDEO_OBSERVATIONS_V8: retain provenance from original inputs.
     observations = extract_video_observations(

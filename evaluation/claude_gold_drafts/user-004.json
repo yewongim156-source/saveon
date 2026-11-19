@@ -1,0 +1,65 @@
+{
+  "_meta": {
+    "itemId": "user-004",
+    "source": "https://www.youtube.com/shorts/3zugaG7Sf5c",
+    "method": "영상 재생 프레임의 화면 자막, 번호 제목, 화면 속 유튜브 영상 카드를 읽고 자동 생성 STT와 대조해 작성. 파이프라인의 STT/OCR 결과는 정답 작성에 사용하지 않음.",
+    "annotator": "claude-assisted-video-review",
+    "status": "DRAFT",
+    "humanReviewed": false,
+    "capturedAt": "2026-11-19",
+    "notes": [
+      "채널: 김을로 eullo. 화면 상단 제목은 '유산소편 (체지방 감량 위주)'이며 영상 끝에 '2탄: 부위별 홈트 추천도 가져올게요'가 나옴(2탄은 이 영상에 포함되지 않음).",
+      "화면에 뜬 추천 영상 카드: Pamela Reif '10 MIN BEST OF HIIT' (10:34), 빅씨스(Bigsixs) 영상(31:33, 카드 제목 일부만 판독), SOMIFIT 영상(10:54, 카드 제목 일부만 판독). 카드의 조회수는 영상 기준 시점 값이라 정답에서 제외.",
+      "2번 항목의 '천서진 운동' 제작자는 STT가 '에어핏'으로 인식했으나 화면에서 확인하지 못함(에이핏일 가능성). 원본 재확인 필요.",
+      "빅씨스 '타바타 운동'과 '떡국 운동'은 서로 다른 영상으로 소개됨. 화면 자막은 '떡국'으로 표기.",
+      "'헬스장보다 더한 효과', '살 개빠짐', '레전드' 등은 제작자의 주관적 홍보 표현이며 사실 검증 대상이 아님. 요약에서 사실처럼 강조하면 오류로 간주."
+    ]
+  },
+  "gold": {
+    "primaryCategory": "건강/운동",
+    "contentType": "RECOMMENDATION_LIST",
+    "mainTopic": "체지방 감량 위주 홈트(유산소) 유튜브 운동 영상 목적별 추천",
+    "targets": [
+      {
+        "id": "goal-1",
+        "name": "짧고 굵은 운동을 원한다면 (10분컷)",
+        "type": "WORKOUT_GROUP",
+        "evidence": [{"modality": "VISION", "timeMs": 13000, "note": "1. 짧고 굵은걸 원한다면 / 지루하면 안 됨(10분컷) / 효과는 있어야 함"}],
+        "requiredFacts": [
+          {"id": "g1-f1", "text": "추천: 파멜라(Pamela Reif)의 운동 (화면 카드 '10 MIN BEST OF HIIT')"},
+          {"id": "g1-f2", "text": "추천: 빅씨스의 타바타 운동, 신나서 계속하게 된다고 소개"},
+          {"id": "g1-f3", "text": "기준: 지루하지 않고 10분 안팎으로 짧지만 효과는 있어야 함"}
+        ],
+        "optionalFacts": []
+      },
+      {
+        "id": "goal-2",
+        "name": "단기간에 빼고 싶다면 (땀 많이 나는 헬스장급 고강도)",
+        "type": "WORKOUT_GROUP",
+        "evidence": [{"modality": "VISION", "timeMs": 21000, "note": "2. 단기간 안에 빼고싶다면 / 땀 억수로 나야 함 / 헬스장 급 고강도"}],
+        "requiredFacts": [
+          {"id": "g2-f1", "text": "추천: 천서진 운동 (제작자 표기 불명확, 에이핏/에어핏 추정)"},
+          {"id": "g2-f2", "text": "추천: 빅씨스의 떡국 운동"},
+          {"id": "g2-f3", "text": "이 두 개가 가장 강력하다고 소개 (제작자 의견)"}
+        ],
+        "optionalFacts": [{"id": "g2-o1", "text": "홈트만으로 짧은 기간에 많이 빼고 싶은 사람 대상"}]
+      },
+      {
+        "id": "goal-3",
+        "name": "팔뚝살을 빼고 싶다면",
+        "type": "WORKOUT_GROUP",
+        "evidence": [{"modality": "VISION", "timeMs": 30000, "note": "3. 팔뚝살 부시길 원한다면 / 라인까지 잡아줌 / 자극 오짐"}],
+        "requiredFacts": [
+          {"id": "g3-f1", "text": "추천: 소미핏의 팔뚝 운동 (화면 카드 SOMIFIT)"},
+          {"id": "g3-f2", "text": "겨드랑이살과 팔뚝살을 겨냥하고 라인까지 잡아준다고 소개 (제작자 의견)"}
+        ],
+        "optionalFacts": []
+      }
+    ],
+    "globalFacts": [
+      "'안 해본 홈트가 없다'는 제작자의 홈트 경력을 내세운 모음집",
+      "이 영상은 유산소(체지방 감량 위주)편이고, 부위별 홈트 추천은 2탄으로 예고만 함"
+    ],
+    "expectedOrder": ["goal-1", "goal-2", "goal-3"]
+  }
+}

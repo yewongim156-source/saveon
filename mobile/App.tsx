@@ -499,15 +499,12 @@ export default function App() {
       try {
         setQualityLoading(true);
 
-        const [content, quality] = await Promise.all([
-          getContent(contentId),
-          getContentQuality(contentId),
-        ]);
-
+        const content = await getContent(contentId);
         if (!cancelled) {
           setDetailRawContent(content);
-          setContentQuality(quality);
         }
+        const quality = await getContentQuality(contentId);
+        if (!cancelled) setContentQuality(quality);
       } catch (error) {
         console.error(
           '❌ 상세 AI 검증 정보 조회 오류:',
@@ -649,9 +646,12 @@ export default function App() {
     );
   }, [contents, selectedCategory]);
 
+  const loadedDetail = screen.name === 'detail' && String(detailRawContent?.id) === screen.itemId
+    ? detailRawContent : null;
   const detailItem =
     screen.name === 'detail'
-      ? contents.find((item) => item.id === screen.itemId) ??
+      ? (loadedDetail ? toContentItem(loadedDetail) : undefined) ??
+        contents.find((item) => item.id === screen.itemId) ??
         searchResults.find((item) => item.id === screen.itemId)
       : undefined;
 
@@ -2058,6 +2058,8 @@ export default function App() {
     itemId: string,
     from: 'home' | 'library' | 'search',
   ) {
+    setDetailRawContent(null);
+    setContentQuality(null);
     setDetailReturnTab(from);
     setScreen({
       name: 'detail',
@@ -3759,6 +3761,35 @@ export default function App() {
       console.error('❌ structuredAnalysis 상세 파싱 오류:', error);
     }
 
+    // Older analyses may contain steps that were never rendered in the summary.
+    const savedSummary = detailItem.summary;
+    const compactText = (value: string) => value.replace(/\s+/g, ' ').trim();
+    const normalizedSummary = compactText(savedSummary);
+    const missingSteps = (value: unknown): string[] => {
+      if (!Array.isArray(value)) return [];
+      const steps = value.flatMap(step =>
+        typeof step?.text === 'string' && step.text.trim()
+          ? [step.text.trim()] : [],
+      );
+      return steps.every(step => normalizedSummary.includes(compactText(step))) ? [] : steps;
+    };
+    const missingSections: string[] = [];
+    if (!detailRawContent?.userEdited) {
+      if (Array.isArray(structuredDetail?.targets)) {
+        for (const target of structuredDetail.targets) {
+          const steps = missingSteps(target?.steps);
+          if (typeof target?.name === 'string' && target.name.trim() && steps.length) {
+            missingSections.push([target.name, ...steps.map((step, i) => `${i + 1}. ${step}`)].join('\n'));
+          }
+        }
+      }
+      const steps = missingSteps(structuredDetail?.globalSteps);
+      if (steps.length) {
+        missingSections.push(['전체 순서', ...steps.map((step, i) => `${i + 1}. ${step}`)].join('\n'));
+      }
+    }
+    const displayedSummary = [savedSummary, ...missingSections].filter(Boolean).join('\n\n');
+
     const detailFactChecks = Array.isArray(
       structuredDetail?.factChecks,
     )
@@ -4034,7 +4065,7 @@ export default function App() {
           </View>
         )}
 
-        {detailRawContent?.status === 'COMPLETED' && (
+        {(loadedDetail?.status ?? detailItem.analysisStatus) === 'COMPLETED' && (
           <>
             <View style={styles.userSection}>
               <View style={styles.userSectionHeader}>
@@ -4064,7 +4095,7 @@ export default function App() {
               {detailItem.videoBasedSummary && (
                 <Text style={styles.mutedText}>영상 기반 요약 · 외부 검증 여부 확인 필요</Text>
               )}
-              <DetailSummaryText text={detailItem.summary} />
+              <DetailSummaryText text={displayedSummary} />
               {Array.isArray(structuredDetail?.externalReferences) &&
                 structuredDetail.externalReferences.map((reference: any, index: number) => {
                   const url = String(reference?.url ?? '');

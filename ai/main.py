@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import Literal
+import hmac
+import os
 import shutil
 import sys
 import tempfile
@@ -8,6 +10,8 @@ from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from services.embedding_service import embed_text
+from services.llm_postprocessor import postprocess_with_llm
+from services.summary_review import review_summary, suggest_examples
 from services.video_pipeline import analyze_video_file
 from services.telemetry import pipeline_step, trace_session
 from services.analysis_progress import progress_scope, get_progress
@@ -39,7 +43,7 @@ app = FastAPI(
 class AnalyzeRequest(BaseModel):
     sourceUrl: str
     thumbnailRequested: bool = False  # rights confirmed by the user
-    promptVariant: Literal["baseline", "few_shot_v1"] = "baseline"
+    promptVariant: Literal["baseline", "few_shot_v1", "structured_v2"] = "baseline"
 
 
 class AnalyzeResponse(BaseModel):
@@ -50,6 +54,108 @@ class AnalyzeResponse(BaseModel):
     entities: list[str]
     structured: dict = Field(default_factory=dict)
     thumbnailBase64: str | None = None  # optional 384px JPEG only for opted-in Reels
+
+
+class RevisionEvidence(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    text: str = Field(min_length=1, max_length=1000)
+    modality: Literal["STT", "OCR"]
+    timeMs: int | None = Field(default=None, ge=0)
+    startMs: int | None = Field(default=None, ge=0)
+    endMs: int | None = Field(default=None, ge=0)
+
+
+class SummaryRevisionRequest(BaseModel):
+    sourceTitle: str = Field(default="", max_length=300)
+    evidence: list[RevisionEvidence] = Field(min_length=1, max_length=200)
+    previousSummary: str = Field(max_length=4000)
+    feedback: str = Field(default="", max_length=2000)
+    desiredSummary: str = Field(default="", max_length=4000)
+
+
+def require_evaluation_token(x_evaluation_token: str):
+    token = os.getenv("SAVEON_EVALUATION_PUBLISH_TOKEN", "").strip()
+    if not token or not hmac.compare_digest(token.encode(), x_evaluation_token.encode()):
+        raise HTTPException(status_code=403)
+
+
+class SummaryReviewRequest(BaseModel):
+    summary: str = Field(min_length=1, max_length=4000)
+    evidence: list[RevisionEvidence] = Field(min_length=1, max_length=200)
+    goldReference: str = Field(default="", max_length=8000)
+    goldStatus: str = Field(default="DRAFT", max_length=50)
+
+
+class PromptTrainingReview(BaseModel):
+    itemId: str = Field(min_length=1, max_length=80)
+    findings: list[dict[str, str]] = Field(max_length=6)
+
+
+class PromptSuggestionRequest(BaseModel):
+    reviews: list[PromptTrainingReview] = Field(min_length=2, max_length=12)
+
+
+@app.post("/internal/suggest-prompt-examples")
+def propose_prompt_examples(payload: PromptSuggestionRequest, x_evaluation_token: str = Header(default="")):
+    require_evaluation_token(x_evaluation_token)
+    return suggest_examples([review.model_dump() for review in payload.reviews])
+
+
+class PromptTrialExample(BaseModel):
+    exampleInput: str = Field(min_length=1, max_length=600)
+    exampleOutput: str = Field(min_length=1, max_length=600)
+
+
+class PromptTrialRequest(BaseModel):
+    sourceTitle: str = Field(default="", max_length=300)
+    evidence: list[RevisionEvidence] = Field(min_length=1, max_length=200)
+    examples: list[PromptTrialExample] = Field(default_factory=list, max_length=3)
+
+
+@app.post("/internal/replay-prompt", response_model=AnalyzeResponse)
+def replay_prompt(payload: PromptTrialRequest, x_evaluation_token: str = Header(default="")):
+    require_evaluation_token(x_evaluation_token)
+    units = [unit.model_dump(exclude_none=True) for unit in payload.evidence]
+    result = postprocess_with_llm(
+        " ".join(unit.text for unit in payload.evidence if unit.modality == "STT"),
+        [unit.text for unit in payload.evidence if unit.modality == "OCR"],
+        [], evidence_units=units, source_title=payload.sourceTitle,
+        candidate_examples=[example.model_dump() for example in payload.examples],
+    )
+    result["structured"].update(videoEvidence=units, verificationStatus="NOT_RUN")
+    return result
+
+
+@app.post("/internal/review-summary")
+def create_summary_review(payload: SummaryReviewRequest, x_evaluation_token: str = Header(default="")):
+    require_evaluation_token(x_evaluation_token)
+    try:
+        return review_summary(payload.summary, [unit.model_dump(exclude_none=True) for unit in payload.evidence],
+                              payload.goldReference, payload.goldStatus)
+    except Exception as exc:
+        if getattr(exc, "code", None) == 429:
+            raise HTTPException(429, "Gemini 호출 한도에 도달했습니다.") from exc
+        raise HTTPException(502, "Gemini 평가 결과를 가져오지 못했습니다.") from exc
+
+
+@app.post("/internal/revise-summary", response_model=AnalyzeResponse)
+def revise_summary(payload: SummaryRevisionRequest, x_evaluation_token: str = Header(default="")):
+    require_evaluation_token(x_evaluation_token)
+    if not (payload.feedback.strip() or payload.desiredSummary.strip()):
+        raise HTTPException(status_code=422, detail="검토 의견이나 원하는 요약 예시를 입력해 주세요.")
+    units = [unit.model_dump(exclude_none=True) for unit in payload.evidence]
+    result = postprocess_with_llm(
+        " ".join(unit.text for unit in payload.evidence if unit.modality == "STT"),
+        [unit.text for unit in payload.evidence if unit.modality == "OCR"],
+        [], evidence_units=units, source_title=payload.sourceTitle, prompt_variant="few_shot_v1",
+        revision_guidance={"previousSummary": payload.previousSummary,
+                           "reviewNote": payload.feedback, "desiredOutputExample": payload.desiredSummary},
+    )
+    structured = result["structured"]
+    if not (structured.get("targets") or structured.get("globalSteps")):
+        raise HTTPException(status_code=422, detail="근거에 연결된 요약을 생성하지 못했습니다.")
+    structured.update(videoEvidence=units, verificationStatus="NOT_RUN", promptVariant="review_guided")
+    return result
 
 
 class EmbedRequest(BaseModel):

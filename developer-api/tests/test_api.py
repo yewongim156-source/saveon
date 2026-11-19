@@ -24,6 +24,97 @@ class DeveloperApiTests(unittest.TestCase):
         Base.metadata.create_all(bind=engine)
         self.client = TestClient(app)
 
+    def test_prompt_comparison_rejects_source_alias_and_reuses_identical_evidence(self):
+        from database import SessionLocal
+        from models import PromptCandidate
+
+        def add_video(url):
+            return self.client.post("/admin/evaluations", json={"url": url}).json()["item"]["id"]
+
+        alias = add_video("https://www.youtube.com/watch?v=source12345")
+        holdout = add_video("https://youtu.be/holdout1234")
+        example = {"exampleInput": "가상 영상 근거", "exampleOutput": "가상 요약"}
+        with SessionLocal() as db:
+            db.add(PromptCandidate(id="candidate", payload_json=json.dumps({
+                "id": "candidate", "sourceItemIds": ["another-label"],
+                "sourceVideoKeys": ["youtube:source12345"], "examples": [example],
+            })))
+            db.commit()
+        inputs = {"candidateId": "candidate"}
+        path = "/admin/evaluations/{}/runs/baseline/prompt-comparisons"
+        run = {"status": "COMPLETED", "stt": [], "ocr": [{"id": "ocr-1", "text": "실제 근거"}],
+               "gemini": {"title": "영상"}}
+        with patch("evaluation_api.load_run", return_value=run), patch("evaluation_api.request_prompt_experiment") as call:
+            self.assertEqual(self.client.post(path.format(alias), json=inputs).status_code, 409)
+            call.assert_not_called()
+            call.side_effect = [
+                {"summary": "기존 결과", "structured": {}},
+                {"summary": "새 결과", "structured": {}},
+            ]
+            compared = self.client.post(path.format(holdout), json=inputs)
+            self.assertEqual(compared.status_code, 200)
+            baseline, candidate = [entry.args[1] for entry in call.call_args_list]
+            self.assertEqual(baseline, {**candidate, "examples": []})
+            self.assertEqual(candidate["examples"], [example])
+        runs = self.client.get(f"/admin/evaluations/{holdout}").json()["runs"]
+        self.assertEqual({r["id"] for r in runs if r["id"] in compared.json().values()},
+                         set(compared.json().values()))
+
+    def test_ai_review_is_saved_and_reused_for_same_gold_revision(self):
+        item = self.client.post("/admin/evaluations", json={"url": "https://youtu.be/sample"}).json()["item"]
+        run = {"status": "COMPLETED", "stt": [], "ocr": [{"id": "ocr-1", "text": "립밤"}],
+               "gemini": {"summary": "립스틱"}}
+        path = f"/admin/evaluations/{item['id']}/runs/baseline/ai-review"
+        with patch("evaluation_api.load_run", return_value=run), patch.dict(
+            os.environ, {"SAVEON_EVALUATION_PUBLISH_TOKEN": "test"}
+        ), patch("evaluation_api.httpx.Client") as client:
+            call = client.return_value.__enter__.return_value.post
+            call.return_value.json.return_value = {"model": "test", "findings": []}
+            first = self.client.post(path)
+            second = self.client.post(path)
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.json(), first.json())
+            call.assert_called_once()
+
+    def test_publication_uses_saved_run_and_existing_content_id(self):
+        item = self.client.post("/admin/evaluations", json={"url": "https://youtu.be/sample"}).json()["item"]
+        run = {"status": "COMPLETED", "gemini": {"summary": "저장된 요약", "structured": {"targets": []}}}
+        with patch("evaluation_api.load_run", return_value=run), patch("evaluation_api.publication_request") as publish:
+            publish.return_value = {"id": 29}
+            result = self.client.put(
+                f"/admin/evaluations/{item['id']}/runs/baseline/publication",
+                json={"contentId": 29, "expectedAnalyzedAt": "2026-11-17T16:11:35"},
+            )
+        self.assertEqual(result.status_code, 200)
+        publish.assert_called_once_with("PUT", "/29", json={
+            "summary": "저장된 요약",
+            "structured": {"targets": []},
+            "sourceUrl": "https://youtu.be/sample",
+            "expectedAnalyzedAt": "2026-11-17T16:11:35",
+        })
+
+    def test_manual_and_guided_revisions_save_separate_runs(self):
+        item = self.client.post("/admin/evaluations", json={"url": "https://youtu.be/sample"}).json()["item"]
+        evidence = {"id": "ocr-1", "text": "립밤", "modality": "OCR"}
+        parent = {"status": "COMPLETED", "stt": [], "ocr": [evidence],
+                  "gemini": {"summary": "기존 요약", "title": "제품"}}
+        path = f"/admin/evaluations/{item['id']}/runs/baseline/revisions"
+        with patch("evaluation_api.load_run", return_value=parent):
+            manual = self.client.post(path, json={"mode": "manual", "desiredSummary": "직접 쓴 립밤 요약"})
+            self.assertEqual(manual.status_code, 202)
+            self.assertEqual(manual.json()["gemini"]["summary"], "직접 쓴 립밤 요약")
+            with patch.dict(os.environ, {"SAVEON_EVALUATION_PUBLISH_TOKEN": "test"}), patch("evaluation_api.httpx.Client") as client:
+                call = client.return_value.__enter__.return_value.post
+                call.return_value.json.return_value = {"summary": "다시 쓴 립밤 요약", "structured": {}}
+                guided = self.client.post(path, json={"mode": "feedback", "feedback": "립스틱이 아닌 립밤"})
+                self.assertEqual(guided.status_code, 202)
+                self.assertTrue(call.call_args.args[0].endswith("/internal/revise-summary"))
+                self.assertEqual(call.call_args.kwargs["json"]["evidence"], [evidence])
+                self.assertEqual(call.call_args.kwargs["json"]["feedback"], "립스틱이 아닌 립밤")
+                completed = self.client.post(f"/admin/evaluations/{item['id']}/runs/{guided.json()['id']}/refresh")
+                self.assertEqual(completed.json()["gemini"]["summary"], "다시 쓴 립밤 요약")
+                self.assertEqual(completed.json()["raw"]["content"]["evaluationConfig"]["parentRunId"], "baseline")
+
     @classmethod
     def tearDownClass(cls):
         engine.dispose()

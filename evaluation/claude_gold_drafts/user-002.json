@@ -1,0 +1,101 @@
+{
+  "_meta": {
+    "itemId": "user-002",
+    "source": "https://www.youtube.com/shorts/1gaj1I2mQ8M",
+    "method": "화면에 뜬 상품 카드(브랜드·상품명·가격)와 자막을 영상 재생 프레임에서 직접 읽어 작성. 파이프라인의 STT/OCR 결과는 정답 작성에 사용하지 않음.",
+    "annotator": "claude-assisted-video-review",
+    "status": "DRAFT",
+    "humanReviewed": false,
+    "capturedAt": "2026-11-19",
+    "notes": [
+      "가격은 영상 업로드일(2026-10-07) 기준 표시 가격이며 현재가가 아님.",
+      "2번 상품명은 저해상도 프레임에서 '플리르'로 읽힘. 'Gemini 출력의 플리츠'와 다를 수 있어 원본 재확인 필요.",
+      "6번 스커트는 내레이션은 '연보라 스커트'지만 화면의 상품은 회색 계열로 보임. 상품 카드 표기를 정답으로 사용."
+    ]
+  },
+  "gold": {
+    "primaryCategory": "뷰티/패션",
+    "contentType": "PRODUCT_LIST",
+    "mainTopic": "지그재그에서 산 가을 의류 6종 추천",
+    "targets": [
+      {
+        "id": "product-1",
+        "name": "드무어 [DEMOOR] 에피 딥브이 니트",
+        "type": "PRODUCT",
+        "evidence": [{"modality": "VISION", "timeMs": 4400, "note": "상품 카드"}],
+        "requiredFacts": [
+          {"id": "p1-brand", "text": "브랜드: 드무어(DEMOOR)"},
+          {"id": "p1-price", "text": "표시 가격 38,750원"},
+          {"id": "p1-f1", "text": "명치까지 내려오는 깊은 V넥 블루 니트"},
+          {"id": "p1-f2", "text": "안에 티셔츠만 받쳐 입어도 심심하지 않고 핏이 탄탄하게 잡힘"}
+        ],
+        "optionalFacts": [{"id": "p1-o1", "text": "울 100% 표기"}]
+      },
+      {
+        "id": "product-2",
+        "name": "어파트오브 [MADE] 플리르(?) 맥시 밴딩 스커트",
+        "type": "PRODUCT",
+        "evidence": [{"modality": "VISION", "timeMs": 11700, "note": "상품 카드, 상품명 글자는 재확인 필요"}],
+        "requiredFacts": [
+          {"id": "p2-brand", "text": "브랜드: 어파트오브"},
+          {"id": "p2-price", "text": "표시 가격 64,000원"},
+          {"id": "p2-f1", "text": "레이스 소재에 꽃무늬가 들어간 맥시 길이 밴딩 스커트"},
+          {"id": "p2-f2", "text": "지금 사면 겨울까지 입을 수 있음"}
+        ],
+        "optionalFacts": [{"id": "p2-o1", "text": "2컬러"}]
+      },
+      {
+        "id": "product-3",
+        "name": "메이비베이비 Viremont Jacket",
+        "type": "PRODUCT",
+        "evidence": [{"modality": "VISION", "timeMs": 19700, "note": "상품 카드"}],
+        "requiredFacts": [
+          {"id": "p3-brand", "text": "브랜드: 메이비베이비"},
+          {"id": "p3-price", "text": "표시 가격 86,000원"},
+          {"id": "p3-f1", "text": "워싱 처리된 하이넥 블루종, 노란기가 적은 베이지 계열"},
+          {"id": "p3-f2", "text": "대충 걸쳐도 핀터레스트 같은 무드가 남"}
+        ],
+        "optionalFacts": []
+      },
+      {
+        "id": "product-4",
+        "name": "모렌트 [mt] 밀리스 셔링 베이직 브이넥 티셔츠",
+        "type": "PRODUCT",
+        "evidence": [{"modality": "VISION", "timeMs": 26000, "note": "상품 카드"}],
+        "requiredFacts": [
+          {"id": "p4-brand", "text": "브랜드: 모렌트(molente)"},
+          {"id": "p4-price", "text": "표시 가격 19,830원"},
+          {"id": "p4-f1", "text": "모달 소재, 속이 비치지 않아 부담 없음"},
+          {"id": "p4-f2", "text": "안에 받쳐 입은 옷이 살짝 보이게 매치하기 좋음"}
+        ],
+        "optionalFacts": [{"id": "p4-o1", "text": "퍼플 계열 7부 티셔츠"}]
+      },
+      {
+        "id": "product-5",
+        "name": "히어썸웨어 이든 스트라이프 티셔츠",
+        "type": "PRODUCT",
+        "evidence": [{"modality": "VISION", "timeMs": 33000, "note": "상품 카드"}],
+        "requiredFacts": [
+          {"id": "p5-brand", "text": "브랜드: 히어썸웨어"},
+          {"id": "p5-price", "text": "표시 가격 27,000원"},
+          {"id": "p5-f1", "text": "레이어드할 때 필수 아이템인 단가라(스트라이프) 티셔츠"},
+          {"id": "p5-f2", "text": "피치 기모 원단으로 포근함"}
+        ],
+        "optionalFacts": [{"id": "p5-o1", "text": "3컬러"}]
+      },
+      {
+        "id": "product-6",
+        "name": "가내스라 [ordinaire] 오로라 미디스커트",
+        "type": "PRODUCT",
+        "evidence": [{"modality": "VISION", "timeMs": 37500, "note": "상품 카드"}],
+        "requiredFacts": [
+          {"id": "p6-brand", "text": "브랜드: 가내스라"},
+          {"id": "p6-price", "text": "표시 가격 33,970원"},
+          {"id": "p6-f1", "text": "스카프와 함께 입으면 브랜드 제품 같은 고급스러운 느낌"}
+        ],
+        "optionalFacts": [{"id": "p6-o1", "text": "2컬러"}]
+      }
+    ],
+    "expectedOrder": ["product-1", "product-2", "product-3", "product-4", "product-5", "product-6"]
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "_meta": {
+    "itemId": "user-010",
+    "source": "https://www.youtube.com/shorts/l9dkZj_FXNY",
+    "method": "영상 재생 프레임의 화면 번호 제목과 하단 자막을 읽어 작성. 오디오는 배경음악과 영어 가사뿐이라 STT는 근거로 쓸 수 없음.",
+    "annotator": "claude-assisted-video-review",
+    "status": "DRAFT",
+    "humanReviewed": false,
+    "capturedAt": "2026-11-19",
+    "notes": [
+      "3차 보정: 재실행한 파이프라인 OCR에서 '들머리도 많아서 좋습니다'(약 4.4초)와 '많은 사람들에게 꽤 유명한 곳입니다'(약 7.3초) 자막을 추가로 확인. 어느 코스에 대한 문장인지는 원본 확인 필요.",
+      "이 영상은 화면 자막이 유일한 정보원임. STT(아랍어/영어 오인식)는 무시해야 함.",
+      "소요 시간, 거리, 난이도는 영상에 나오지 않음. 요약에 지어내면 오류. (2차 보정: 처음 작성한 정답은 샘플 프레임 간격이 넓어 2코스의 들머리·날머리 자막과 3코스의 마을버스 자막을 놓쳤음. 파이프라인 OCR과 영상 재확인으로 추가함.)",
+      "3번 항목 자막의 '백만송희님'은 유튜버 이름으로 보이나 판독이 불확실함.",
+      "'초보자에게 적합하다'는 영상 제목과 제작자의 주장이며 사실 검증된 것이 아님."
+    ]
+  },
+  "gold": {
+    "primaryCategory": "장소/여행",
+    "contentType": "PLACE_LIST",
+    "mainTopic": "서울 등산 초보 코스 추천 베스트 3",
+    "targets": [
+      {
+        "id": "course-1",
+        "name": "관악산 연주대 코스",
+        "type": "PLACE",
+        "evidence": [{"modality": "OCR", "timeMs": 3500, "note": "1. 관악산 연주대 코스"}],
+        "requiredFacts": [
+          {"id": "c1-f1", "text": "서울의 큰 산 중 첫 번째로 꼽는 곳이 관악산이라고 소개"},
+          {"id": "c1-f2", "text": "서울에서 초보자가 등산하기 가장 접근성이 좋은 산"},
+          {"id": "c1-f3", "text": "들머리가 많아서 좋음"}
+        ],
+        "optionalFacts": []
+      },
+      {
+        "id": "course-2",
+        "name": "북악산 창의문 코스",
+        "type": "PLACE",
+        "evidence": [{"modality": "OCR", "timeMs": 6500, "note": "2. 북악산 창의문 코스"}],
+        "requiredFacts": [
+          {"id": "c2-f1", "text": "자연 속을 걷다 하산하면 바로 서울 도심 속 맛집에 둘러싸이게 됨"},
+          {"id": "c2-f3", "text": "삼청공원과 연계되는 들머리와 날머리가 삼청동, 북촌 등으로 이어짐"},
+          {"id": "c2-f2", "text": "직접 가보기 전에는 서울에서 볼 수 있을 거라고 상상하기 어려운 장소라고 소개"}
+        ],
+        "optionalFacts": []
+      },
+      {
+        "id": "course-3",
+        "name": "인왕산 개미마을 코스",
+        "type": "PLACE",
+        "evidence": [{"modality": "OCR", "timeMs": 11000, "note": "3. 인왕산 개미마을 코스"}],
+        "requiredFacts": [
+          {"id": "c3-f1", "text": "아기자기한 오르막길을 올라가는 코스"},
+          {"id": "c3-f3", "text": "작은 마을버스를 타고 이동하며, '여기가 서울이야?' 싶을 정도로 아기자기한 분위기"},
+          {"id": "c3-f2", "text": "가볍게 오르다 보면 멋진 풍광이 펼쳐진다고 소개"}
+        ],
+        "optionalFacts": [{"id": "c3-o1", "text": "다른 유튜버(백만송희로 보임)의 영상에도 나왔던 코스"}]
+      }
+    ],
+    "globalFacts": [
+      "서울 등산 초보 코스 3곳을 번호순으로 소개하는 15초 영상",
+      "소요 시간, 거리, 난이도는 영상에 없음"
+    ],
+    "expectedOrder": ["course-1", "course-2", "course-3"]
+  }
+}

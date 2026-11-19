@@ -56,6 +56,15 @@ annotation marks prior reviews stale; review edits are kept in the developer
 database and are not committed through Git. Annotation updates also increment
 the revision and consequently mark previous reviews stale.
 
+To publish a reviewed run, configure the same private
+`SAVEON_EVALUATION_PUBLISH_TOKEN` for the developer and Spring processes.
+Both apps must use the same Spring database. In the run detail, select
+**기존 보관함 항목에 반영** and choose an existing item of the same video.
+The action updates its summary and evidence, preserves its ID and other
+library metadata, and does not create a library entry or re-run a model.
+Manually edited records are protected. Existing semantic embeddings are
+preserved and are not rebuilt by this action.
+
 Evaluation can select `baseline` or `few_shot_v1`; the selected variant is
 stored with the result. It does not change the app's default prompt. For an
 apples-to-apples prompt experiment, `evaluation/compare_prompt_variants.py`

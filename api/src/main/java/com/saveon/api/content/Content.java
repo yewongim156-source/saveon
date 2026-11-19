@@ -2,6 +2,7 @@ package com.saveon.api.content;
 
 import jakarta.persistence.*;
 import org.hibernate.annotations.Array;
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -42,6 +43,7 @@ public class Content {
     private String structuredAnalysis;
 
     @Column(name = "user_edited", nullable = false)
+    @ColumnDefault("false")
     private boolean userEdited = false;
 
     @Column(name = "edited_at")

@@ -17,6 +17,9 @@ FACT_CHECK_ENABLED = os.getenv(
     "FACT_CHECK_ENABLED",
     "false",
 ).lower() in {"1", "true", "yes", "on"}
+# "grounding" = Gemini Google Search grounding (default), "search" = search APIs
+# plus a judge that may only cite the returned snippets (services.search_verification).
+FACT_CHECK_ENGINE = os.getenv("FACT_CHECK_ENGINE", "grounding").strip().lower()
 FACT_CHECK_MODEL = os.getenv(
     "GEMINI_FACT_CHECK_MODEL",
     GEMINI_MODEL,
@@ -173,7 +176,11 @@ def verify_structured_claims(structured: dict) -> dict:
                     "claimType": claim.get("type", "OTHER"),
                 },
             ) as step:
-                checked = _verify_claim(claim)
+                if FACT_CHECK_ENGINE == "search":
+                    from services.search_verification import verify_claim_by_search
+                    checked = verify_claim_by_search(claim)
+                else:
+                    checked = _verify_claim(claim)
                 checks.append(checked)
                 step.set_output({
                     "verdict": checked.get("verdict"),

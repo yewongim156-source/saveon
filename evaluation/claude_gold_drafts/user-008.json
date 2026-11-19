@@ -1,0 +1,41 @@
+{
+  "_meta": {
+    "itemId": "user-008",
+    "source": "https://www.youtube.com/shorts/AgUDtoqj1Fo",
+    "method": "영상 재생 프레임의 화면 자막(한국어/일본어)과 장면을 읽고 자동 생성 STT와 대조해 작성.",
+    "annotator": "claude-assisted-video-review",
+    "status": "DRAFT",
+    "humanReviewed": false,
+    "capturedAt": "2026-11-19",
+    "notes": [
+      "보정: 파이프라인 OCR은 영상 속 글자에서 '커피냄로스터리인데'를 읽었음. 컵 로고는 COFFEE NAP ROASTERY로 보여 실제 상호는 '커피냅로스터스' 등 다른 표기일 수 있음. 브라우저에서 본 상단 검은 박스 자막은 YouTube 자동 자막으로 보이며 영상 자체 글자가 아닐 수 있음.",
+      "가게 이름은 화면에 명확히 표기되지 않음. 화면 자막은 '커피 넬로 스토리'(음성 인식 결과와 동일), 컵 로고는 'COFFEE NAP ROASTERY'로 보임. 실제 상호는 외부 확인 필요하므로 지도 연결 전에 반드시 검증할 것.",
+      "화면 자막의 '홍수동'은 '성수동'의 오인식. 화면 상단 문구는 '도쿄 느낌이 나는 성수동에 숨은 카페'.",
+      "주소, 운영시간, 메뉴 가격은 영상에 나오지 않음. 이를 요약에 지어내면 안 됨."
+    ]
+  },
+  "gold": {
+    "primaryCategory": "장소/여행",
+    "contentType": "PLACE",
+    "mainTopic": "성수동의 도쿄 느낌 숨은 카페 추천",
+    "targets": [
+      {
+        "id": "place-1",
+        "name": "성수동 카페 (상호 미확정: 커피 넬로 스토리/COFFEE NAP ROASTERY로 보임)",
+        "type": "PLACE",
+        "requiredFacts": [
+          {"id": "p1-f1", "text": "위치: 성수동"},
+          {"id": "p1-f2", "text": "도쿄 느낌이 나는 카페"},
+          {"id": "p1-f3", "text": "메론빵이 맛있어서 꼭 먹어야 한다고 추천"},
+          {"id": "p1-f4", "text": "혼자 작업하기 좋은 분위기"},
+          {"id": "p1-f5", "text": "건물 사이에 숨어 있어 조용함"}
+        ],
+        "optionalFacts": []
+      }
+    ],
+    "globalFacts": [
+      "주소와 운영시간은 영상에 없으므로 영상 근거로 제시하면 안 됨"
+    ],
+    "expectedOrder": []
+  }
+}
