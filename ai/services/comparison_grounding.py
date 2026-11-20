@@ -244,12 +244,157 @@ def _objective_value_in_quote(value: str, quote: str) -> bool:
     return _normalize(value) in _normalize(quote)
 
 
+# PRICE is a property of an individual product/variant, not of its seller.
+# Avoid treating a store or brand as the common price-bearing subject.
+_PRICE_AMOUNT = re.compile(
+    r"(?:(?:₩|krw)\s*(\d[\d,]*(?:\.\d+)?)|"
+    r"(\d[\d,]*(?:\.\d+)?)\s*(?:원|만원|천원)|"
+    r"(?:가격|정가|판매가|할인가|price)\s*(?:은|는|이|가|:|：|=)?\s*(\d[\d,]*(?:\.\d+)?))",
+    re.IGNORECASE,
+)
+_VARIANT = re.compile(r"(?<![\d.])\d+(?:\.\d+)?\s*(?:ml|g|kg|l|개입|매입|호)(?![가-힣a-z])", re.IGNORECASE)
+
+
+def _product_key(value: str) -> str:
+    """Strict normalized full product name; never match by shared brand token."""
+    return re.sub(r"[^가-힣a-z0-9]+", "", _normalize(value))
+
+
+def _named_products(context: dict) -> set[str]:
+    details = context.get("entityDetails") or []
+    if not isinstance(details, list):
+        return set()
+    # Explicit BRAND classification overrides an ambiguous PRODUCT tag.
+    non_products = {
+        _product_key(item.get("name")) for item in details
+        if isinstance(item, dict)
+        and _normalize(item.get("type")) in ("brand", "place", "category", "store")
+    }
+    source_text = _product_key(" ".join(
+        [str(context.get("title") or ""), str(context.get("summary") or "")]
+        + [str(x) for x in (context.get("keywords") or []) if isinstance(x, str)]
+    ))
+    names = set()
+    for item in details:
+        if not isinstance(item, dict) or _normalize(item.get("type")) != "product":
+            continue
+        name = _product_key(item.get("name"))
+        # Insufficiently specific labels (e.g. '쿠션') are not item identities.
+        if (len(name) < 5 or name in non_products or name not in source_text
+                or re.search(r"추천템|꿀템|모음|하울|생활용품|아이템|제품추천|상품추천|쇼핑리스트", name)):
+            continue
+        try:
+            if item.get("confidence") is not None and float(item["confidence"]) < 0.45:
+                continue
+        except (ValueError, TypeError):
+            continue
+        names.add(name)
+    return names
+
+
+def _product_variants(context: dict) -> set[str]:
+    # Only explicit variant quantities are used. Generic numeric values, prices,
+    # and dates are not treated as product identities.
+    title = _normalize(context.get("title"))
+    return {re.sub(r"\s+", "", x.casefold()) for x in _VARIANT.findall(title)}
+
+
+def _same_product_evidence(evidence: list[dict], contexts: dict[int, dict],
+                           entity: str = "") -> list[dict]:
+    """Return only videos explicitly naming the same product (and not mismatched variants).
+
+    Fail closed for unknown/missing product identifiers. We deliberately do
+    not infer SKU equality from a shared merchant, brand, or category.
+    """
+    expected = _product_key(entity)
+    if entity and len(expected) < 5:
+        return []
+    eligible = {}
+    for ev in evidence:
+        cid = ev["contentId"]
+        products = _named_products(contexts[cid])
+        if expected:
+            products &= {expected}
+        for product in products:
+            eligible.setdefault(product, []).append(ev)
+    matches = [(key, evs) for key, evs in eligible.items()
+               if len({ev["contentId"] for ev in evs}) >= 2]
+    if not matches:
+        return []
+    # More than one distinct plausible identity means the model's subject is
+    # ambiguous; never choose a product by guesswork.
+    if len(matches) != 1:
+        return []
+    selected = matches[0][1]
+    compatible = []
+    for ev in selected:
+        current = _product_variants(contexts[ev["contentId"]])
+        if any(current and _product_variants(contexts[x["contentId"]])
+               and current.isdisjoint(_product_variants(contexts[x["contentId"]]))
+               for x in compatible):
+            continue
+        compatible.append(ev)
+    return compatible if len({ev["contentId"] for ev in compatible}) >= 2 else []
+
+
+def _price_amounts(text: str) -> set[str]:
+    # A quote may contain both "5,000원" and a view count "1,059,439".
+    # The price must match a *currency-labelled or price-labelled* amount.
+    result = set()
+    for match in _PRICE_AMOUNT.finditer(_normalize(text)):
+        amount = next((group for group in match.groups() if group), "")
+        result.update(_numbers(amount))
+    return result
+
+
+def _supported_price(value: str, quote: str, context: dict) -> bool:
+    if not _numbers(value) or not (_numbers(value) & _price_amounts(quote)):
+        return False
+    observations = context.get("videoObservations")
+    if not isinstance(observations, list) or not observations:
+        # Legacy content may have only a title or analyzed summary.
+        return True
+    # When observations exist, OCR_UNVERIFIED or TOPIC_MENTION alone is not
+    # evidence of a spoken/creator-described price.
+    direct = any(
+        isinstance(obs, dict)
+        and obs.get("kind") == "DIRECT_STATEMENT"
+        and obs.get("source") in ("STT", "DESCRIPTION")
+        and bool(_numbers(value) & _price_amounts(_clean(obs.get("quote"))))
+        for obs in observations
+    )
+    if direct:
+        return True
+    for fact in context.get("verifiedFacts") or []:
+        phrase = (fact if isinstance(fact, str) else
+                  " ".join(str(v) for v in fact.values() if isinstance(v, (str, int, float)))
+                  if isinstance(fact, dict) else "")
+        if _numbers(value) & _price_amounts(phrase):
+            return True
+    return False
+
+
+def _is_price_disagreement(raw: dict) -> bool:
+    return bool(re.search(r"가격|금액|판매가|정가|price|\bkrw\b|\d[\d,]*\s*원",
+                          _clean(raw.get("topic")) + " " + _clean(raw.get("statement")),
+                          re.IGNORECASE))
+
+
 def _objective_valid(raw: dict, contexts: dict[int, dict]) -> dict | None:
     if not isinstance(raw, dict):
         return None
     evidence = _ground_evidences(raw, contexts)
     if len(evidence) < 2:
         return None
+    field = _normalize(raw.get("field")).upper()
+    if field == "PRICE":
+        # Product identity must be explicit. A same-brand comparison is not a
+        # same-product comparison; do not send its prices for external checking.
+        if not _clean(raw.get("entity")):
+            return None
+        evidence = _same_product_evidence(evidence, contexts, _clean(raw.get("entity")))
+        if len(evidence) < 2:
+            return None
     values: list[str] = []
     seen_values: set[tuple] = set()
     for item in (raw.get("values") or []):
@@ -270,7 +415,12 @@ def _objective_valid(raw: dict, contexts: dict[int, dict]) -> dict | None:
     # Each contradictory value must be explicitly present in a different video.
     value_sources: dict[str, set[int]] = {}
     for value in values:
-        source_ids = {x["contentId"] for x in evidence if _objective_value_in_quote(value, x["quote"])}
+        source_ids = {
+            x["contentId"] for x in evidence
+            if _objective_value_in_quote(value, x["quote"])
+            and (field != "PRICE" or _supported_price(
+                value, x["quote"], contexts[x["contentId"]]))
+        }
         if source_ids:
             value_sources[value] = source_ids
     if len(value_sources) < 2:
@@ -282,7 +432,10 @@ def _objective_valid(raw: dict, contexts: dict[int, dict]) -> dict | None:
     if not distinct_videos:
         return None
     validated_values = list(value_sources)
-    return {**raw, "values": validated_values, "evidences": evidence}
+    # Do not display unrelated videos as price evidence after filtering.
+    retained_ids = set().union(*value_sources.values())
+    return {**raw, "values": validated_values,
+            "evidences": [ev for ev in evidence if ev["contentId"] in retained_ids]}
 
 
 def _video_focus(context: dict) -> tuple[str, str]:
@@ -567,7 +720,9 @@ def ground_comparison_results(
                 _has_review_outcome_evidence(source_by_id[ev["contentId"]], c["topic"])
                 for ev in c["evidences"]
             )
-            if (len(c["evidences"]) >= 2 and review_checked and
+            price_checked = (not _is_price_disagreement(c) or
+                             len(_same_product_evidence(c["evidences"], source_by_id)) >= 2)
+            if (len(c["evidences"]) >= 2 and review_checked and price_checked and
                     audit.get(f"{group}:{c['index']}:joint") is True):
                 disagreements.append(_finding(c["topic"], c["statement"], c["evidences"]))
             # One-sided opinions cannot establish a contradiction.
@@ -577,10 +732,17 @@ def ground_comparison_results(
                 add_unique(c["topic"], supported[0])
 
     objective = []
+    seen_objective: set[tuple[str, str]] = set()
     for value in (raw.get("objectiveDisagreements") or [])[:8]:
         verified = _objective_valid(value, source_by_id)
         if verified:
-            objective.append(verified)
+            # One card per concrete product and field, not three overlapping
+            # 'same shop has different prices' alerts.
+            key = (_normalize(verified.get("field")),
+                   _product_key(verified.get("entity")))
+            if key not in seen_objective:
+                objective.append(verified)
+                seen_objective.add(key)
 
     # If there is no defensible *common claim*, show shared topics separately
     # labelled as topic overlap, never as identical opinions or performance.

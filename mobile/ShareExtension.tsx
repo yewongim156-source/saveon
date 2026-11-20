@@ -55,6 +55,7 @@ function inferPlatform(
 }
 
 type SaveState =
+  | 'ready'
   | 'saving'
   | 'success'
   | 'error';
@@ -70,13 +71,17 @@ export default function ShareExtension(
     [props.url, props.text],
   );
 
+  const isInstagramReel = Boolean(
+    sharedUrl && /^https?:\/\/(?:www\.)?instagram\.com\/reels?\//i.test(sharedUrl),
+  );
   const startedRef = useRef(false);
+  const [instagramThumbnailAllowed, setInstagramThumbnailAllowed] = useState(false);
 
   const [state, setState] =
-    useState<SaveState>('saving');
+    useState<SaveState>(isInstagramReel ? 'ready' : 'saving');
 
   const [message, setMessage] =
-    useState('공유한 링크를 저장하고 있어요.');
+    useState(isInstagramReel ? '대표 이미지 저장 여부를 선택한 뒤 저장해 주세요.' : '공유한 링크를 저장하고 있어요.');
 
   async function saveSharedContent() {
     if (!sharedUrl) {
@@ -96,6 +101,7 @@ export default function ShareExtension(
       const saved = await createContent(
         sharedUrl,
         inferPlatform(sharedUrl),
+        isInstagramReel && instagramThumbnailAllowed,
       );
 
       console.log(
@@ -129,7 +135,7 @@ export default function ShareExtension(
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
-    saveSharedContent();
+    if (!isInstagramReel) saveSharedContent();
   }, []);
 
   return (
@@ -146,8 +152,10 @@ export default function ShareExtension(
           allowFontScaling={false}
           style={styles.title}
         >
-          {state === 'saving'
-            ? '콘텐츠 저장 중'
+          {state === 'ready'
+            ? '릴스 저장'
+            : state === 'saving'
+              ? '콘텐츠 저장 중'
             : state === 'success'
               ? '저장 완료'
               : '저장 실패'}
@@ -168,6 +176,36 @@ export default function ShareExtension(
           >
             {sharedUrl}
           </Text>
+        )}
+
+        {state === 'ready' && isInstagramReel && (
+          <View style={styles.permissionArea}>
+            <Pressable
+              style={styles.permissionRow}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: instagramThumbnailAllowed }}
+              onPress={() => setInstagramThumbnailAllowed((old) => !old)}
+            >
+              <Text style={styles.permissionCheck}>
+                {instagramThumbnailAllowed ? '☑' : '☐'}
+              </Text>
+              <Text style={styles.permissionLabel}>
+                이 릴스의 대표 이미지를 저장·표시할 권한이 있어요.
+              </Text>
+            </Pressable>
+            <View style={styles.actions}>
+              <Pressable style={styles.primaryButton} onPress={saveSharedContent}>
+                <Text allowFontScaling={false} style={styles.primaryButtonText}>
+                  저장하기
+                </Text>
+              </Pressable>
+              <Pressable style={styles.secondaryButton} onPress={close}>
+                <Text allowFontScaling={false} style={styles.secondaryButtonText}>
+                  취소
+                </Text>
+              </Pressable>
+            </View>
+          </View>
         )}
 
         {state === 'saving' && (
@@ -211,6 +249,10 @@ export default function ShareExtension(
 }
 
 const styles = StyleSheet.create({
+  permissionArea: { marginTop: 16 },
+  permissionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
+  permissionCheck: { color: '#6750A4', fontSize: 24 },
+  permissionLabel: { flex: 1, color: '#515A69', fontSize: 13, lineHeight: 20 },
   safe: {
     flex: 1,
     backgroundColor: '#F6F5FA',
@@ -279,3 +321,5 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 });
+
+// SAVEON_SHARE_THUMBNAIL_OPTIN_V2
