@@ -10,6 +10,11 @@ from urllib.parse import urlsplit
 # YouTube reviews are often a little longer than Shorts/Reels. Save:on still
 # rejects very long videos by default, but the test/review use case can now
 # handle videos up to 20 minutes. Override with YOUTUBE_MAX_DURATION_SECONDS.
+# "720p" must also cover vertical Shorts, whose 720p stream is 720x1280. A plain
+# height<=720 filter silently picked the 360x640 stream, which is too small for
+# OCR to read overlay text such as product cards.
+_RESOLUTION_LIMIT = "[height<=1280][width<=1280]"
+
 DEFAULT_MAX_DURATION_SECONDS = 20 * 60
 DEFAULT_MAX_FILE_SIZE_MB = 150
 MIN_DOWNLOADED_FILE_BYTES = 1024
@@ -288,8 +293,8 @@ def download_youtube_video(
                 normalized_url,
                 output_dir,
                 format_selector=(
-                    "best[ext=mp4][height<=720][acodec!=none]/"
-                    "best[height<=720][acodec!=none]/best"
+                    f"best[ext=mp4]{_RESOLUTION_LIMIT}[acodec!=none]/"
+                    f"best{_RESOLUTION_LIMIT}[acodec!=none]/best"
                 ),
                 filename_suffix="media",
                 max_file_size=max_file_size,
@@ -302,8 +307,8 @@ def download_youtube_video(
                 normalized_url,
                 output_dir,
                 format_selector=(
-                    "bestvideo[ext=mp4][height<=720]/"
-                    "bestvideo[height<=720]/bestvideo"
+                    f"bestvideo[ext=mp4]{_RESOLUTION_LIMIT}/"
+                    f"bestvideo{_RESOLUTION_LIMIT}/bestvideo"
                 ),
                 filename_suffix="video",
                 max_file_size=max_file_size,

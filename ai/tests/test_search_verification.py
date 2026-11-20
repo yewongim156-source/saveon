@@ -18,6 +18,44 @@ class SearchVerificationTests(unittest.TestCase):
             self.assertEqual(sv.providers_for("LOCATION"), ["kakao", "tavily", "wikipedia"])
             self.assertEqual(sv.providers_for("PRICE"), ["tavily"])
 
+    def test_price_queries_add_the_shop_named_in_the_video(self):
+        claim = {"text": "히어썸웨어 이든 스트라이프 티셔츠의 가격은 27,000원이다.", "type": "PRICE",
+                 "searchQuery": "히어썸웨어 이든 스트라이프 티셔츠 가격"}
+        zigzag = {"sourceTitle": "지그재그 가을 잘산템 BEST6", "sourceChannel": "", "sourceDescription": ""}
+        self.assertEqual(sv.query_variants(claim, zigzag),
+                         ["히어썸웨어 이든 스트라이프 티셔츠 가격", "히어썸웨어 이든 스트라이프 티셔츠 지그재그"])
+        self.assertEqual(sv.query_variants(claim, {}),
+                         ["히어썸웨어 이든 스트라이프 티셔츠 가격", "히어썸웨어 이든 스트라이프 티셔츠 구매"])
+        place = {"text": "성수동에 있다", "type": "LOCATION", "searchQuery": "성수동 카페"}
+        self.assertEqual(sv.query_variants(place, zigzag), ["성수동 카페"])
+
+    def test_spellings_used_on_screen_become_extra_queries(self):
+        ocr = ["[DEMOOR] 에피 덥브이 니트 (울100)", "4.7 리뷰 251", "아무 관련 없는 문구"]
+        self.assertEqual(sv.spelling_alternatives("드무어 에피 딥브이 니트", ocr), ["드무어 에피 덥브이 니트"])
+        self.assertEqual(sv.spelling_alternatives("드무어 에피 딥브이 니트", ["에피 딥브이 니트"]), [])
+        self.assertEqual(sv.spelling_alternatives("드무어 에피 딥브이 니트", None), [])
+        claim = {"text": "드무어 에피 딥브이 니트의 가격은 38,750원이다.", "type": "PRICE",
+                 "searchQuery": "드무어 에피 딥브이 니트 가격"}
+        context = {"sourceTitle": "지그재그 가을 잘산템", "ocrTexts": ocr}
+        self.assertEqual(sv.query_variants(claim, context), [
+            "드무어 에피 딥브이 니트 가격",
+            "드무어 에피 딥브이 니트 지그재그",
+            "드무어 에피 덥브이 니트 지그재그",
+        ])
+
+    def test_snippets_showing_the_claimed_number_are_ranked_first(self):
+        calls = []
+        def fake(query, deep=False):
+            calls.append((query, deep))
+            if query.endswith("지그재그"):
+                return [snippet("상품 페이지", "https://z.example/p1", "이든 스트라이프 티셔츠 27,000 24,300 원", "tavily")]
+            return [snippet("엉뚱한 글", "https://x.example/1", "스트라이프 일반 소개", "tavily")]
+        with patch.dict(os.environ, {"SEARCH_PROVIDERS": "tavily", "TAVILY_API_KEY": "t"}), \
+                patch.object(sv, "PROVIDERS", {"tavily": (fake, None)}):
+            found = sv.search_snippets("이든 티셔츠 가격", "PRICE", ["이든 티셔츠 지그재그"], "이든 티셔츠 가격은 27,000원이다")
+        self.assertEqual(calls, [("이든 티셔츠 가격", True), ("이든 티셔츠 지그재그", True)])  # price claims search deeper
+        self.assertEqual([s["url"] for s in found], ["https://z.example/p1", "https://x.example/1"])
+
     def test_without_any_provider_nothing_is_searched_or_judged(self):
         with patch.dict(os.environ, {"SEARCH_PROVIDERS": "tavily", "TAVILY_API_KEY": ""}), \
                 patch.object(sv, "_judge") as judge:

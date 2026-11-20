@@ -45,8 +45,37 @@ class StructuredAnalysisTests(unittest.TestCase):
         self.assertIn("- 간장 1스푼, 설탕 0.5스푼", deduped["summary"])
         self.assertEqual(len(deduped["structured"]["targets"][0]["details"]), 2)
 
+    def test_v2_summary_numbers_items_and_bullets_the_rest_without_repeating_order(self):
+        evidence = [{"id": "e1"}]
+        item = lambda text: {"text": text, "evidenceIds": ["e1"]}
+        def target(name, details, steps):
+            return {"name": name, "nameEvidenceIds": ["e1"], "type": "PLACE",
+                    "details": [item(d) for d in details], "steps": [item(s) for s in steps]}
+        payload = {
+            "targets": [target("서울숲", ["꽃사슴 방사장이 있음"], ["정원 산책하기"]),
+                        target("파르코", ["화덕피자 맛집"], ["4번 출입구로 나와서 방문하기"])],
+            "globalSteps": [item("서울숲을 산책한다"), item("파르코에서 식사한다")],
+        }
+        summary = _normalize_result(payload, evidence, strict=True)["summary"]
+        self.assertEqual(summary, (
+            "1. 서울숲\n- 꽃사슴 방사장이 있음\n- 정원 산책하기\n\n"
+            "2. 파르코\n- 화덕피자 맛집\n- 4번 출입구로 나와서 방문하기"
+        ))
+        self.assertNotIn("전체 순서", summary)
+
+    def test_v2_summary_for_a_single_recipe_keeps_numbered_steps_under_the_name(self):
+        evidence = [{"id": "e1"}]
+        item = lambda text: {"text": text, "evidenceIds": ["e1"]}
+        payload = {"targets": [{"name": "소시지 덮밥", "nameEvidenceIds": ["e1"], "type": "RECIPE",
+                                "details": [item("간장 1스푼, 설탕 0.5스푼")], "steps": []}],
+                   "globalSteps": [item("소시지를 굽는다"), item("밥 위에 올린다")]}
+        self.assertEqual(
+            _normalize_result(payload, evidence, strict=True)["summary"],
+            "소시지 덮밥\n- 간장 1스푼, 설탕 0.5스푼\n1. 소시지를 굽는다\n2. 밥 위에 올린다",
+        )
+
     def test_strict_drops_prices_not_found_in_cited_units(self):
-        evidence = [{"id": "ocr-1", "text": "438750"}, {"id": "ocr-2", "text": "드무어 에피 딥브이니트"}]
+        evidence = [{"id": "ocr-1", "text": "438750"}, {"id": "ocr-2", "text": "드무어 에피 딥브이니트 명치까지 내려오는 V넥"}]
         target = {
             "name": "드무어 에피 딥브이 니트", "nameEvidenceIds": ["ocr-2"], "type": "PRODUCT",
             "details": [
@@ -62,8 +91,23 @@ class StructuredAnalysisTests(unittest.TestCase):
         texts = [detail["text"] for detail in strict["structured"]["targets"][0]["details"]]
         self.assertEqual(texts, ["영상 표시 가격 38,750원", "명치까지 내려오는 V넥"])
 
+    def test_strict_drops_details_whose_wording_is_not_in_the_cited_units(self):
+        evidence = [{"id": "o1", "text": "서울에서 초보자가 등산하기"}, {"id": "o2", "text": "가장 접근성이 좋고"},
+                    {"id": "o3", "text": "들머리도 많아서 좋습니다."}]
+        item = lambda text: {"text": text, "evidenceIds": ["o1", "o2", "o3"]}
+        target = {"name": "관악산 연주대 코스", "nameEvidenceIds": ["o1"], "type": "PLACE", "steps": [],
+                  "details": [item("서울에서 초보자가 등산하기 접근성이 좋고 들머리가 많음"),
+                              item("대중교통으로 가기 좋고 들머리가 많습니다"),
+                              item("가격 38,750원")]}
+        loose = _normalize_result({"targets": [target]}, evidence)["structured"]["targets"][0]["details"]
+        strict = _normalize_result({"targets": [target]}, evidence, strict=True)["structured"]["targets"][0]["details"]
+        self.assertEqual(len(loose), 3)
+        # the invented 대중교통 sentence is dropped (and the ungrounded price by the price check)
+        self.assertEqual([d["text"] for d in strict],
+                         ["서울에서 초보자가 등산하기 접근성이 좋고 들머리가 많음"])
+
     def test_strict_labels_promotional_details_and_uses_neutral_source_title(self):
-        evidence = [{"id": "stt-1", "text": "헬스장보다 더한 효과"}]
+        evidence = [{"id": "stt-1", "text": "헬스장보다 더한 효과 효과가 보장되는 운동"}]
         target = {
             "name": "홈트", "nameEvidenceIds": ["stt-1"], "type": "WORKOUT",
             "details": [{"text": "효과가 보장되는 운동", "evidenceIds": ["stt-1"]}], "steps": [],
@@ -75,6 +119,23 @@ class StructuredAnalysisTests(unittest.TestCase):
         self.assertEqual(strict["title"], "인생 홈트 모음집")
         self.assertEqual(strict["structured"]["targets"][0]["details"][0]["text"], "영상 주장: 효과가 보장되는 운동")
 
+    def test_strict_never_searches_opinions_but_keeps_checkable_facts(self):
+        evidence = [{"id": "e1"}]
+        claim = lambda text, kind: {"text": text, "type": kind, "verifiable": True, "searchQuery": "q", "confidence": 0.9}
+        payload = {"claims": [
+            claim("관악산 연주대 코스는 서울에서 초보자가 등산하기 접근성이 가장 좋다.", "LOCATION"),
+            claim("인왕산 개미마을 코스는 마을버스를 타고 가볍게 오를 수 있다.", "LOCATION"),
+            claim("서울국제정원박람회는 10월 27일까지 진행된다.", "DATE_TIME"),
+            claim("북악산 창의문 코스는 삼청공원으로 이어진다.", "LOCATION"),
+            claim("이 운동은 체지방 감량에 효과가 있다.", "HEALTH_BEAUTY"),
+        ]}
+        loose = _normalize_result(payload, evidence)["structured"]["claims"]
+        strict = _normalize_result(payload, evidence, strict=True)["structured"]["claims"]
+        # The result keeps at most three claims, in the order given.
+        self.assertEqual([c["verifiable"] for c in loose], [True, True, True])
+        self.assertEqual([c["verifiable"] for c in strict], [False, False, True])
+        self.assertEqual([c["searchQuery"] for c in strict], ["", "", "q"])
+
     def test_flags_when_fewer_targets_than_announced(self):
         evidence = [{"id": "ocr-1"}]
         target = {"name": "A", "nameEvidenceIds": ["ocr-1"], "type": "PRODUCT", "details": [], "steps": []}
@@ -84,6 +145,17 @@ class StructuredAnalysisTests(unittest.TestCase):
         self.assertEqual((short["structured"]["announcedItemCount"], short["structured"]["itemCountMismatch"]), (6, True))
         self.assertFalse(full["structured"]["itemCountMismatch"])
         self.assertNotIn("itemCountMismatch", none["structured"])
+
+    def test_large_frames_are_scaled_down_for_ocr_speed(self):
+        import numpy as np
+        shapes = []
+        def fake_read(image, **kwargs):
+            shapes.append(image.shape)
+            return ["상품 카드"]
+        with patch("services.video_pipeline._get_ocr") as reader:
+            reader.return_value.readtext.side_effect = fake_read
+            run_timed_ocr([(0, np.zeros((1280, 720, 3), dtype=np.uint8)), (750, np.zeros((600, 400, 3), dtype=np.uint8))])
+        self.assertEqual(shapes, [(960, 540, 3), (600, 400, 3)])
 
     def test_ocr_keeps_first_timestamp_and_deduplicates(self):
         import numpy as np

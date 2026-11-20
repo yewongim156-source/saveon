@@ -54,6 +54,19 @@ public class ContentService {
     public Content create(
             CreateContentRequest request
     ) {
+        // 같은 원본 영상은 한 번만 저장한다. 이미 있으면 새로 만들지 않고
+        // 기존 항목을 돌려준다. 이전에 분석이 실패한 항목만 다시 분석한다.
+        Content existing =
+                findExistingBySource(
+                        request.sourceUrl()
+                );
+
+        if (existing != null) {
+            return existing.getStatus() == ContentStatus.FAILED
+                    ? analyze(existing)
+                    : existing;
+        }
+
         Content content =
                 new Content(
                         request.sourceUrl(),
@@ -77,6 +90,45 @@ public class ContentService {
         );
 
         return content;
+    }
+
+
+    /**
+     * 같은 원본 영상(URL 기준, 공유 파라미터 무시)으로 저장된 항목을 찾는다.
+     * 업로드 파일이나 주소가 없는 항목은 서로 같은 원본으로 보지 않는다.
+     */
+    Content findExistingBySource(
+            String sourceUrl
+    ) {
+        String identity =
+                ContentSourceIdentity.key(
+                        sourceUrl,
+                        null
+                );
+
+        if (identity.startsWith("id:")) {
+            return null;
+        }
+
+        Content newest = null;
+
+        for (Content candidate : contentRepository.findAll()) {
+            if (identity.equals(
+                    ContentSourceIdentity.key(
+                            candidate.getSourceUrl(),
+                            candidate.getId()
+                    )
+            )) {
+                if (newest == null
+                        || (candidate.getId() != null
+                        && newest.getId() != null
+                        && candidate.getId() > newest.getId())) {
+                    newest = candidate;
+                }
+            }
+        }
+
+        return newest;
     }
 
 

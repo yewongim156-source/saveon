@@ -16,6 +16,7 @@ from services.llm_postprocessor import (
     GEMINI_MODEL,
     postprocess_with_llm,
 )
+from services.overlay_vision import refine_overlay_ocr
 from services.video_observations import extract_video_observations, review_excerpt_lines
 from services.category_quality_guard import refine_analysis_categories
 from services.fact_verifier import verify_structured_claims
@@ -244,9 +245,15 @@ def run_timed_ocr(frames: Iterable[tuple[int, np.ndarray]]) -> list[dict]:
     reader = None
     found = []
     seen = set()
+    max_side = int(os.getenv("OCR_MAX_SIDE", "960"))
     for time_ms, frame in frames:
         if reader is None:
             reader = _get_ocr()
+        # 720x1280 frames made EasyOCR very slow; key cards are re-read by vision anyway.
+        longest = max(frame.shape[:2])
+        if max_side > 0 and longest > max_side:
+            scale = max_side / longest
+            frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         lines = reader.readtext(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), detail=0, paragraph=False)
         for line in lines:
             text = " ".join(str(line).split()).strip()
@@ -569,6 +576,17 @@ def analyze_video_file(
         ocr_lines = [item["text"] for item in timed_ocr]
         step.set_output({"lineCount": len(ocr_lines)})
 
+    # EasyOCR misreads small stylized overlay text; re-read a few card/amount frames
+    # with Gemini vision. Failures keep the EasyOCR lines.
+    with pipeline_step(
+        "overlay-text-vision",
+        kind="TOOL",
+        model=GEMINI_MODEL,
+    ) as step:
+        timed_ocr, vision_stats = refine_overlay_ocr(video_path, timed_ocr)
+        ocr_lines = [item["text"] for item in timed_ocr]
+        step.set_output(vision_stats)
+
     needs_vision = not transcript.strip() and not ocr_lines
     preview_frames = []
     if needs_vision or thumbnail_requested:
@@ -739,10 +757,25 @@ def analyze_video_file(
     if isinstance(result.get("structured"), dict):
         result["structured"]["videoObservations"] = observations
 
+    if isinstance(result.get("structured"), dict):
+        # Lets price checks add the shop named in the video ("... 지그재그") to the query.
+        result["structured"]["verificationContext"] = {
+            "sourceTitle": source_title,
+            "sourceChannel": source_channel,
+            "sourceDescription": (source_description or "")[:300],
+        }
+
     result["structured"] = verify_structured_claims(
         result.get("structured", {})
     )
     result = apply_verified_summary(result)
+    if isinstance(result.get("structured"), dict):
+        # Blog, shop and place pages about the same subject, plus the pages that confirmed a claim.
+        from services.related_links import find_related_links
+        result["structured"]["relatedLinks"] = find_related_links(
+            result.get("title", ""), result.get("keywords", []),
+            result["structured"].get("factChecks"),
+        )
     from services.external_reference import add_educational_reference
     result = add_educational_reference(result)
     # Remove redundant broad labels only, after Gemini/fallback/verification.

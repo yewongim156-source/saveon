@@ -16,6 +16,7 @@ import json
 import os
 import re
 from datetime import date
+from difflib import SequenceMatcher
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
@@ -27,6 +28,7 @@ USER_AGENT = "SaveOn/0.1 (https://github.com/yewongim156-source/saveon)"
 SEARCH_MODEL = os.getenv("GEMINI_FACT_CHECK_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"))
 MAX_SNIPPETS = 6
 SNIPPET_CHARS = 400
+PRICE_SNIPPET_CHARS = 800  # sale and regular prices often appear after the title block
 
 VERDICTS = ["SUPPORTED", "PARTIALLY_SUPPORTED", "CONFLICTING", "INSUFFICIENT_EVIDENCE"]
 
@@ -71,11 +73,13 @@ def _search_wikipedia(query: str) -> list[dict]:
     } for item in body.get("query", {}).get("search", [])]
 
 
-def _search_tavily(query: str) -> list[dict]:
+def _search_tavily(query: str, deep: bool = False) -> list[dict]:
+    # "advanced" returns longer, more relevant chunks (prices sit deep in product pages)
+    # at twice the credit cost, so it is used for price claims only.
     body = _http_json(
         "https://api.tavily.com/search",
         headers={"Authorization": "Bearer " + os.environ["TAVILY_API_KEY"]},
-        body={"query": query, "search_depth": "basic", "max_results": 4},
+        body={"query": query, "search_depth": "advanced" if deep else "basic", "max_results": 4},
     )
     return [{
         "title": _clean(item.get("title")),
@@ -121,20 +125,102 @@ def providers_for(claim_type: str) -> list[str]:
     return [name for name in ROUTES.get(str(claim_type).upper(), DEFAULT_ROUTE) if name in ready]
 
 
-def search_snippets(query: str, claim_type: str) -> list[dict]:
+# (query label, lowercase aliases that may appear in the video title/channel/description)
+SHOPPING_PLATFORMS = (
+    ("지그재그", ("지그재그", "zigzag")),
+    ("무신사", ("무신사", "musinsa")),
+    ("올리브영", ("올리브영", "올영", "oliveyoung", "olive young")),
+    ("쿠팡", ("쿠팡", "coupang")),
+    ("29CM", ("29cm",)),
+    ("에이블리", ("에이블리", "ably")),
+    ("다이소", ("다이소", "daiso")),
+    ("마켓컬리", ("컬리", "kurly")),
+    ("네이버쇼핑", ("네이버쇼핑", "스마트스토어")),
+)
+MAX_QUERY_VARIANTS = 4
+
+
+def _strip_noise(text: str) -> str:
+    """Drop bracketed tags such as [DEMOOR] or (울100) and extra spaces."""
+    return " ".join(re.sub(r"[\[\(][^\]\)]*[\]\)]", " ", text).split())
+
+
+def spelling_alternatives(name: str, ocr_texts: list[str] | None, limit: int = 1) -> list[str]:
+    """Other spellings of a product name that the video's own on-screen text used.
+
+    The shop listing may spell a word differently from the card ("딥브이" vs "덥브이"),
+    and a search engine often finds the page for only one of them. A word of an OCR line
+    that is similar to, but not the same as, a word of the name replaces it.
+    """
+    tokens = name.split()
+    found: list[str] = []
+    for line in ocr_texts or []:
+        line_tokens = _strip_noise(str(line)).split()
+        if len(line_tokens) < 2:
+            continue
+        shared = [t for t in line_tokens if t in tokens]
+        for token in line_tokens:
+            if token in tokens or len(shared) < 2 or len(token) < 2:
+                continue
+            best = max(tokens, key=lambda t: SequenceMatcher(None, t, token).ratio())
+            if best != token and SequenceMatcher(None, best, token).ratio() >= 0.6:
+                variant = " ".join(token if t == best else t for t in tokens)
+                if variant != name and variant not in found:
+                    found.append(variant)
+        if len(found) >= limit:
+            break
+    return found[:limit]
+
+
+def query_variants(claim: dict, context: dict | None = None) -> list[str]:
+    """The claim's own query, plus shop-specific ones for prices.
+
+    A bare product query often returns unrelated pages, while the same query with the
+    shop named in the video ("... 지그재그") finds the product page itself. Spellings seen
+    in the video's on-screen text are tried as well.
+    """
+    base = " ".join(str(claim.get("searchQuery") or claim.get("text") or "").split())
+    variants = [base] if base else []
+    if str(claim.get("type", "")).upper() == "PRICE" and base:
+        name = re.sub(r"\s*(가격|얼마)\s*$", "", base).strip() or base
+        haystack = " ".join(str((context or {}).get(key, "")) for key in
+                            ("sourceTitle", "sourceChannel", "sourceDescription")).lower()
+        platforms = [label for label, aliases in SHOPPING_PLATFORMS if any(alias in haystack for alias in aliases)]
+        for label in platforms:
+            variants.append(f"{name} {label}")
+        if not platforms:
+            variants.append(f"{name} 구매")
+        for alternative in spelling_alternatives(name, (context or {}).get("ocrTexts")):
+            variants.append(f"{alternative} {platforms[0]}" if platforms else alternative)
+    return list(dict.fromkeys(variants))[:MAX_QUERY_VARIANTS]
+
+
+def _numbers_in(text: str) -> set[str]:
+    return {digits for digits in (re.sub(r"\D", "", part) for part in re.findall(r"\d[\d,]*", text)) if len(digits) >= 3}
+
+
+def search_snippets(query: str, claim_type: str, extra_queries: list[str] | None = None,
+                    claim_text: str = "") -> list[dict]:
     snippets: list[dict] = []
     seen: set[str] = set()
-    for name in providers_for(claim_type):
-        try:
-            found = PROVIDERS[name][0](query)
-        except Exception as exc:  # a failing provider must not stop the others
-            print(f"[SEARCH VERIFY] {name} 실패: {type(exc).__name__}")
-            continue
-        for item in found:
-            url = item.get("url", "")
-            if url and url not in seen and item.get("snippet"):
-                seen.add(url)
-                snippets.append({**item, "snippet": item["snippet"][:SNIPPET_CHARS]})
+    is_price = str(claim_type).upper() == "PRICE"
+    snippet_chars = PRICE_SNIPPET_CHARS if is_price else SNIPPET_CHARS
+    for text in [query, *(extra_queries or [])]:
+        for name in providers_for(claim_type):
+            try:
+                search = PROVIDERS[name][0]
+                found = search(text, deep=True) if (name == "tavily" and is_price) else search(text)
+            except Exception as exc:  # a failing provider must not stop the others
+                print(f"[SEARCH VERIFY] {name} 실패: {type(exc).__name__}")
+                continue
+            for item in found:
+                url = item.get("url", "")
+                if url and url not in seen and item.get("snippet"):
+                    seen.add(url)
+                    snippets.append({**item, "snippet": item["snippet"][:snippet_chars]})
+    wanted = _numbers_in(claim_text)
+    if wanted:  # snippets that show the claimed number come first
+        snippets.sort(key=lambda s: 0 if wanted & _numbers_in(s["snippet"]) else 1)
     return snippets[:MAX_SNIPPETS]
 
 
@@ -144,7 +230,8 @@ def _judge(claim_text: str, snippets: list[dict], model: str | None = None) -> d
     with create_gemini_client() as client:
         response = client.models.generate_content(
             model=model or SEARCH_MODEL,
-            contents=json.dumps({"claim": claim_text, "snippets": numbered}, ensure_ascii=False),
+            contents=json.dumps({"today": date.today().isoformat(), "claim": claim_text, "snippets": numbered},
+                                ensure_ascii=False),
             config=types.GenerateContentConfig(
                 system_instruction=(
                     "Judge whether the claim is supported by the supplied search snippets only. "
@@ -155,7 +242,19 @@ def _judge(claim_text: str, snippets: list[dict], model: str | None = None) -> d
                     "that exact shop, product or event. If the claim does not name a specific shop, product, "
                     "tool, place or person, or the snippets are about a different entity than the one named, "
                     "answer INSUFFICIENT_EVIDENCE; a snippet about another shop or about the category in "
-                    "general is not support. Do not use outside knowledge. Cite the supporting "
+                    "general is not support. The input has today's date. When the claim states a period, "
+                    "date or schedule that the snippets confirm, answer SUPPORTED, and if that period has "
+                    "already ended as of today, say so in the explanation (for example '행사는 10월 27일 "
+                    "종료됨'). A claim saying something is 'ongoing' that has ended is PARTIALLY_SUPPORTED. "
+                    "For a price claim, a product page whose regular (list) price equals the claimed amount "
+                    "is SUPPORTED even when a discounted price is also shown; mention the current sale "
+                    "price in the explanation. When the claimed amount appears only as a sale price while "
+                    "the regular price is clearly higher, answer PARTIALLY_SUPPORTED and state both, for "
+                    "example '38,750원은 지그재그 34% 할인가이고 정가는 58,500원'. If only a different "
+                    "sale, coupon or another seller's price is shown, answer PARTIALLY_SUPPORTED, not "
+                    "CONFLICTING; use CONFLICTING only when no page shows the claimed amount at all and "
+                    "the prices clearly differ. "
+                    "Do not use outside knowledge. Cite the supporting "
                     "snippet indexes. Write a short Korean explanation."
                 ),
                 temperature=0.1,
@@ -178,7 +277,7 @@ def _judge(claim_text: str, snippets: list[dict], model: str | None = None) -> d
     return json.loads(response.text)
 
 
-def verify_claim_by_search(claim: dict) -> dict:
+def verify_claim_by_search(claim: dict, context: dict | None = None) -> dict:
     claim_text = str(claim.get("text", "")).strip()
     claim_type = claim.get("type", "OTHER")
     base = {"claim": claim_text, "claimType": claim_type, "engine": "search",
@@ -187,8 +286,8 @@ def verify_claim_by_search(claim: dict) -> dict:
     if not available_providers():
         return {**base, "verdict": "INSUFFICIENT_EVIDENCE",
                 "explanation": "설정된 검색 제공자가 없어 확인하지 못했습니다."}
-    query = str(claim.get("searchQuery") or claim_text).strip()
-    snippets = search_snippets(query, claim_type)
+    variants = query_variants(claim, context) or [claim_text]
+    snippets = search_snippets(variants[0], claim_type, variants[1:], claim_text)
     if not snippets:
         return {**base, "verdict": "INSUFFICIENT_EVIDENCE", "explanation": "검색 결과에서 근거를 찾지 못했습니다."}
     if not GEMINI_API_KEY:
