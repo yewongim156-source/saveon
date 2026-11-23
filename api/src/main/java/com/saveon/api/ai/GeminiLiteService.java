@@ -4,10 +4,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -240,8 +242,10 @@ public class GeminiLiteService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("AI 요청이 중단됐습니다.", e);
-        } catch (Exception e) {
-            throw new IllegalStateException("Gemini 무료 API 호출에 실패했습니다.", e);
+        } catch (HttpTimeoutException e) {
+            throw new IllegalStateException("Gemini API 응답 시간이 초과됐습니다.", e);
+        } catch (IOException e) {
+            throw new IllegalStateException("Gemini API 연결 오류: " + e.getClass().getSimpleName(), e);
         }
     }
 
