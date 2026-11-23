@@ -35,9 +35,22 @@ EXPO_PUBLIC_API_BASE_URL=http://localhost:8080/api/v1 npx expo start --web
 
 For a public site, use an HTTPS backend URL and configure CORS for the deployed frontend's origin. Browser requests to local `localhost` refer to the **visitor's device**, not the developer's machine.
 
+## Shared evaluation-code setup
+
+The web branch's `src/lib/api.ts` requests a shared evaluation code **only** if built with `EXPO_PUBLIC_EVALUATION_MODE=true`. The visitor types the code; it is stored in browser session storage, never embedded in the static bundle. The server must have the matching `SAVEON_EVALUATION_ACCESS_KEY` configured in Render.
+
+Set the public Vercel build variables:
+
+- `EXPO_PUBLIC_EVALUATION_MODE=true`
+- `EXPO_PUBLIC_API_BASE_URL=https://YOUR-RENDER-API.onrender.com/api/v1`
+
+Redeploy after these variables are set. Do not set the server's secret code in Vercel.
+
+This is a **shared** evaluation database. Participants can see one another's saved content and should be told to use only public, nonsensitive videos. The current gate is not per-student authorization.
+
 ## Critical safety checklist before publishing
 
-**Do not publish a live evaluation site yet.** The current Java API exposes the full `GET /api/v1/contents` list and broad CORS; there is no confirmed per-user access restriction in that endpoint. A public evaluation site needs at least:
+**Do not publish a live evaluation site yet.** A shared-code access guard exists on the web branch but there is no per-student data isolation and expensive-request rate limiting is still needed. A public evaluation site needs at least:
 
 - Student isolation or an explicitly shared, disposable evaluation dataset with informed consent.
 - Authentication/access control and restricted CORS; rate limiting for expensive analysis endpoints.
