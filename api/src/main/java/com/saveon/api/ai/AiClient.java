@@ -16,12 +16,17 @@ public class AiClient {
 
     private final JsonMapper jsonMapper;
     private final String aiBaseUrl;
+    private final String aiMode;
+    private final GeminiLiteService geminiLiteService;
 
     public AiClient(
-            @Value("${saveon.ai.base-url}")
-            String aiBaseUrl
+            @Value("${saveon.ai.base-url}") String aiBaseUrl,
+            @Value("${SAVEON_AI_MODE:local}") String aiMode,
+            GeminiLiteService geminiLiteService
     ) {
         this.aiBaseUrl = aiBaseUrl;
+        this.aiMode = aiMode;
+        this.geminiLiteService = geminiLiteService;
         this.jsonMapper = JsonMapper.builder().build();
     }
 
@@ -36,6 +41,9 @@ public class AiClient {
 
     public AiAnalyzeResponse analyze(String sourceUrl, Long contentId,
             boolean thumbnailRequested) {
+        if ("gemini-lite".equalsIgnoreCase(aiMode)) {
+            return geminiLiteService.analyzeLink(sourceUrl);
+        }
         HttpURLConnection connection = null;
 
         try {
@@ -125,6 +133,9 @@ public class AiClient {
     public AiEmbedResponse embed(
             String text
     ) {
+        if ("gemini-lite".equalsIgnoreCase(aiMode)) {
+            return geminiLiteService.embed(text);
+        }
         HttpURLConnection connection = null;
 
         try {

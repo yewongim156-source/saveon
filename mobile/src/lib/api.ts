@@ -293,12 +293,64 @@ const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL ??
   'http://localhost:8080/api/v1';
 
+const EVALUATION_WEB =
+  process.env.EXPO_PUBLIC_EVALUATION_MODE === 'true' &&
+  typeof window !== 'undefined';
+const EVALUATION_CODE_STORAGE = 'saveon-evaluation-access-code';
+let evaluationPromptCancelled = false;
+
+function readEvaluationCode(): string {
+  if (!EVALUATION_WEB || evaluationPromptCancelled) return '';
+  try {
+    const existing = window.sessionStorage.getItem(EVALUATION_CODE_STORAGE);
+    if (existing) return existing;
+    const entered = window.prompt(
+      'SAVEON 평가용 접속 코드를 입력해 주세요.\\n' +
+      '이 평가판은 모든 참가자가 저장 목록을 공유합니다. ' +
+      '개인정보가 포함된 링크나 영상을 저장하지 마세요.',
+    )?.trim() ?? '';
+    if (!entered) {
+      evaluationPromptCancelled = true;
+      return '';
+    }
+    window.sessionStorage.setItem(EVALUATION_CODE_STORAGE, entered);
+    return entered;
+  } catch {
+    evaluationPromptCancelled = true;
+    return '';
+  }
+}
+
+async function apiFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  if (!EVALUATION_WEB) return globalThis.fetch(input, init);
+  const send = (code: string) => {
+    const headers = new Headers(init?.headers);
+    if (code) headers.set('X-Saveon-Evaluation-Code', code);
+    return globalThis.fetch(input, { ...init, headers });
+  };
+  const code = readEvaluationCode();
+  let response = await send(code);
+  if (response.status === 401 && !evaluationPromptCancelled) {
+    try {
+      window.sessionStorage.removeItem(EVALUATION_CODE_STORAGE);
+    } catch {
+      // Session storage may be blocked.
+    }
+    const replacement = readEvaluationCode();
+    if (replacement) response = await send(replacement);
+  }
+  return response;
+}
+
 export async function createContent(
   sourceUrl: string,
   platform: ApiContent['platform'],
   thumbnailAllowed = false,
 ): Promise<ApiContent> {
-  const response = await fetch(`${API_BASE_URL}/contents`, {
+  const response = await apiFetch(`${API_BASE_URL}/contents`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sourceUrl, platform, thumbnailAllowed }),
@@ -325,7 +377,7 @@ export async function uploadVideo(
     } as any,
   );
 
-  const response = await fetch(`${API_BASE_URL}/contents/upload`, {
+  const response = await apiFetch(`${API_BASE_URL}/contents/upload`, {
     method: 'POST',
     body: formData,
   });
@@ -341,7 +393,7 @@ export async function uploadVideo(
 }
 
 export async function getContentProgress(contentId: number): Promise<ApiContentProgress> {
-  const response = await fetch(`${API_BASE_URL}/contents/${contentId}/progress`);
+  const response = await apiFetch(`${API_BASE_URL}/contents/${contentId}/progress`);
   if (!response.ok) {
     throw new Error(`분석 진행 상태 조회 실패: HTTP ${response.status}`);
   }
@@ -354,7 +406,7 @@ export function getInstagramThumbnailUrl(id: string | number): string {
 }
 
 export async function getContents(): Promise<ApiContent[]> {
-  const response = await fetch(`${API_BASE_URL}/contents`);
+  const response = await apiFetch(`${API_BASE_URL}/contents`);
 
   if (!response.ok) {
     throw new Error(`콘텐츠 조회 실패: HTTP ${response.status}`);
@@ -367,7 +419,7 @@ export async function searchContents(
   query: string,
 ): Promise<ApiContent[]> {
   const searchTerm = encodeURIComponent(query.trim());
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/contents/search?q=${searchTerm}`,
   );
 
@@ -384,7 +436,7 @@ export async function semanticSearchContents(
 ): Promise<ApiContent[]> {
   const searchTerm = encodeURIComponent(query.trim());
   const safeLimit = Math.max(1, Math.min(limit, 50));
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/contents/search/semantic?q=${searchTerm}&limit=${safeLimit}`,
   );
 
@@ -402,7 +454,7 @@ export async function getContentConnections(
 ): Promise<ApiContentConnection[]> {
   const safeLimit = Math.max(1, Math.min(limit, 30));
 
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/content-connections?limit=${safeLimit}`,
   );
 
@@ -422,7 +474,7 @@ export async function getConnectedContents(
   const typeParam = encodeURIComponent(type);
   const entityParam = encodeURIComponent(entity.trim());
 
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/content-connections/contents?type=${typeParam}&entity=${entityParam}`,
   );
 
@@ -442,7 +494,7 @@ export async function getContentBundle(
   const typeParam = encodeURIComponent(type);
   const entityParam = encodeURIComponent(entity.trim());
 
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/content-connections/bundle?type=${typeParam}&entity=${entityParam}`,
   );
 
@@ -460,7 +512,7 @@ export async function getContentBundle(
 export async function reanalyzeContent(
   contentId: number,
 ): Promise<ApiContent> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/contents/${contentId}/analyze`,
     {
       method: 'POST',
@@ -480,7 +532,7 @@ export async function reanalyzeContent(
 export async function getContent(
   contentId: number,
 ): Promise<ApiContent> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/contents/${contentId}`,
   );
 
@@ -496,7 +548,7 @@ export async function getContent(
 export async function getContentQuality(
   contentId: number,
 ): Promise<ApiContentQuality> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/content-quality/${contentId}`,
   );
 
@@ -513,7 +565,7 @@ export async function correctContent(
   contentId: number,
   correction: ApiContentCorrectionRequest,
 ): Promise<ApiContent> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/ai-corrections/content/${contentId}`,
     {
       method: 'POST',
@@ -541,7 +593,7 @@ export async function logActionCorrection(
     errorType: string;
   },
 ): Promise<void> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/ai-corrections/action`,
     {
       method: 'POST',
@@ -558,7 +610,7 @@ export async function logActionCorrection(
 }
 
 export async function getCorrectionStats(): Promise<ApiCorrectionStats> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/ai-corrections/stats`,
   );
 
@@ -574,7 +626,7 @@ export async function getCorrectionStats(): Promise<ApiCorrectionStats> {
 export async function planSingleContentActions(
   contentId: number,
 ): Promise<ApiContentActionPlan> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/content-actions/plan/content/${contentId}`,
     {
       method: 'POST',
@@ -594,7 +646,7 @@ export async function planSingleContentActions(
 export async function planContentActions(
   bundle: ApiContentBundle,
 ): Promise<ApiContentActionPlan> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/content-actions/plan`,
     {
       method: 'POST',
@@ -617,7 +669,7 @@ export async function askSavedKnowledge(
   question: string,
   limit = 5,
 ): Promise<ApiKnowledgeAnswer> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/knowledge/ask`,
     {
       method: 'POST',
@@ -646,7 +698,7 @@ export async function getSmartCollections(
 ): Promise<ApiSmartCollection[]> {
   const safeLimit = Math.max(1, Math.min(limit, 10));
 
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/smart-collections?limit=${safeLimit}`,
   );
 
@@ -665,7 +717,7 @@ export async function compareSmartCollection(
   collectionTitle: string,
   contentIds: number[],
 ): Promise<ApiCollectionComparison> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/collection-comparisons`,
     {
       method: 'POST',
@@ -699,7 +751,7 @@ export async function getContentConflicts(
 ): Promise<ApiContentConflict[]> {
   const safeLimit = Math.max(1, Math.min(limit, 12));
 
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/content-conflicts?limit=${safeLimit}`,
   );
 
@@ -718,7 +770,7 @@ export async function getSmartReminders(
 ): Promise<ApiSmartReminder[]> {
   const safeLimit = Math.max(1, Math.min(limit, 12));
 
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/smart-reminders?limit=${safeLimit}`,
   );
 
@@ -733,7 +785,7 @@ export async function getSmartReminders(
 
 
 export async function getInterestTimeline(): Promise<ApiInterestTimeline> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/interest-timeline`,
   );
 
