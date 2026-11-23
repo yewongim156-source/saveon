@@ -13,6 +13,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.LocalDate;
+import java.time.ZoneId;
 
 /**
  * Temporary shared evaluation-room access gate.
@@ -27,13 +29,18 @@ public class EvaluationAccessFilter extends OncePerRequestFilter {
 
     private final String accessKey;
     private final String allowedOrigin;
+    private final int dailySaves;
+    private LocalDate savedOn = LocalDate.now(ZoneId.of("Asia/Seoul"));
+    private int savesToday = 0;
 
     public EvaluationAccessFilter(
             @Value("${SAVEON_EVALUATION_ACCESS_KEY:}") String accessKey,
-            @Value("${SAVEON_EVALUATION_ALLOWED_ORIGIN:https://saveon-mobile.vercel.app}") String allowedOrigin
+            @Value("${SAVEON_EVALUATION_ALLOWED_ORIGIN:https://saveon-mobile.vercel.app}") String allowedOrigin,
+            @Value("${SAVEON_EVALUATION_DAILY_SAVES:20}") int dailySaves
     ) {
         this.accessKey = accessKey.trim();
         this.allowedOrigin = allowedOrigin.trim();
+        this.dailySaves = Math.max(0, Math.min(dailySaves, 100));
     }
 
     private boolean required() {
@@ -94,6 +101,28 @@ public class EvaluationAccessFilter extends OncePerRequestFilter {
                     "Invalid evaluation access code");
             return;
         }
+        if ("POST".equalsIgnoreCase(request.getMethod())) {
+            if ("/api/v1/contents/upload".equals(request.getRequestURI())) {
+                response.sendError(HttpServletResponse.SC_FORBIDDEN,
+                        "영상 파일 업로드는 평가판에서 사용할 수 없습니다.");
+                return;
+            }
+            if ("/api/v1/contents".equals(request.getRequestURI()) && !allowSave()) {
+                response.sendError(429, "오늘의 평가용 저장 한도에 도달했습니다.");
+                return;
+            }
+        }
         chain.doFilter(request, response);
+    }
+
+    private synchronized boolean allowSave() {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        if (!savedOn.equals(today)) {
+            savedOn = today;
+            savesToday = 0;
+        }
+        if (savesToday >= dailySaves) return false;
+        savesToday++;
+        return true;
     }
 }
