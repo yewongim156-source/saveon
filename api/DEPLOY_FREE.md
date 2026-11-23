@@ -27,9 +27,30 @@ Neon connection information belongs in **Render dashboard environment variables*
 
 **Do not share DB credentials or AI keys in chat, screenshots, or frontend `EXPO_PUBLIC_*` values.**
 
+## Shared evaluation access gate (web branch only)
+
+`EvaluationAccessFilter` requires a visitor-entered code for all `/api/v1/**` routes when hosted on Render or when `SAVEON_EVALUATION_REQUIRE_KEY=true`. If the code is absent on Render, it **fails closed** with 503 rather than exposing the API. The liveness endpoint `/healthz` remains public.
+
+Set these Render server-side environment variables:
+
+- `SAVEON_EVALUATION_REQUIRE_KEY=true`
+- `SAVEON_EVALUATION_ACCESS_KEY=<YOUR_RANDOM_SHARED_CODE>` (keep private; never put it in Vercel)
+- `SAVEON_EVALUATION_ALLOWED_ORIGIN=https://saveon-mobile.vercel.app`
+
+Use a random, hard-to-guess code. Deliver it to a small invited evaluation group separately from the public web URL. It is a **shared evaluation room**, not individual accounts; all participants see the same database. Tell participants to use only public, non-sensitive content, and use a fresh, disposable database.
+
+Set the following Vercel **frontend build** environment variables and redeploy after the Render API has a working HTTPS URL:
+
+- `EXPO_PUBLIC_API_BASE_URL=https://YOUR-RENDER-API.onrender.com/api/v1`
+- `EXPO_PUBLIC_EVALUATION_MODE=true`
+
+The browser asks participants to type the evaluation code at first load and sends it as a request header. Do **not** put `SAVEON_EVALUATION_ACCESS_KEY` in any `EXPO_PUBLIC_*` variable.
+
+**Before distributing publicly**, run a build/test, audit access restrictions, add per-visitor AI rate limits and verify the separate AI server works. The shared-code gate alone does not isolate student data.
+
 ## Critical blockers
 
-1. **Do not publicize a live API yet.** The current endpoints expose a shared list of saved contents and permit broad cross-origin requests. Implement student data segregation or a deliberately shared/disposable evaluation dataset and access control first, plus rate limiting.
+1. **Do not publicize a live API yet.** The web branch has a shared evaluation-code gate and origin check but does not isolate student data. Use a disposable DB with informed participant consent, plus rate limiting before inviting users.
 2. Render Free is 512 MB RAM and sleeps after inactivity; Java Spring Boot + JPA may need memory tuning, and cold starts are expected.
 3. Render does NOT supply a free multimodal AI runtime capable of running SAVEON's unchanged local `faster-whisper`, `EasyOCR`, `torch`, `CLIP`, and video downloader pipeline.
 4. The iOS/Android Share Extension and native calendar/media-picker behaviors need browser-specific fallbacks.
