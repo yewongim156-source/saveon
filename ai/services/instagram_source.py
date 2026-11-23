@@ -165,6 +165,13 @@ def _has_stream(
     return False
 
 
+# Reels are vertical, so their 720p stream is 720x1280. A height<=720 filter
+# skipped it and fell back to a smaller or larger stream. yt-dlp's "res" sort
+# key uses the shorter side, so "res:720" prefers 720p for vertical video too.
+# Same rule as the API server's InstagramReelMedia (-S res:720).
+_VIDEO_FORMAT_SORT = ["res:720"]
+
+
 def _download_stream(
     YoutubeDL,
     common_options: dict,
@@ -174,6 +181,7 @@ def _download_stream(
     format_selector: str,
     filename_suffix: str,
     max_file_size: int,
+    format_sort: list[str] | None = None,
 ) -> tuple[Path, dict]:
     options = {
         **common_options,
@@ -186,6 +194,8 @@ def _download_stream(
         "overwrites": True,
         "restrictfilenames": True,
     }
+    if format_sort:
+        options["format_sort"] = format_sort
 
     with YoutubeDL(options) as downloader:
         info = downloader.extract_info(
@@ -291,11 +301,12 @@ def download_instagram_reel(
                 normalized_url,
                 output_dir,
                 format_selector=(
-                    "best[ext=mp4][height<=720][acodec!=none]/"
-                    "best[height<=720][acodec!=none]/best"
+                    "best[ext=mp4][acodec!=none]/"
+                    "best[acodec!=none]/best"
                 ),
                 filename_suffix="media",
                 max_file_size=max_file_size,
+                format_sort=_VIDEO_FORMAT_SORT,
             )
             audio_path = video_path
 
@@ -305,12 +316,10 @@ def download_instagram_reel(
                 common_options,
                 normalized_url,
                 output_dir,
-                format_selector=(
-                    "bestvideo[ext=mp4][height<=720]/"
-                    "bestvideo[height<=720]/bestvideo"
-                ),
+                format_selector="bestvideo[ext=mp4]/bestvideo",
                 filename_suffix="video",
                 max_file_size=max_file_size,
+                format_sort=_VIDEO_FORMAT_SORT,
             )
 
             if _has_stream(
