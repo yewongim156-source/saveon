@@ -34,7 +34,8 @@ final class InstagramReelMedia {
                     "yt-dlp", "--ignore-config", "--no-playlist", "--no-cache-dir",
                     "--socket-timeout", "12", "--retries", "0", "--fragment-retries", "0",
                     "--max-filesize", "8M", "--merge-output-format", "mp4",
-                    "-f", "bv[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4][height<=720]",
+                    "-S", "res:720",
+                    "-f", "bv[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
                     "-o", video.toString(), "--", reelUrl)
                     .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                     .redirectError(ProcessBuilder.Redirect.DISCARD)
