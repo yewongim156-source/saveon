@@ -2071,7 +2071,7 @@ export default function App() {
     const trimmed = url.trim();
 
 
-    if (loading || uploading) return;
+    if (submittingUrl || uploading) return;
     if (!isSaveLinkValid(trimmed)) {
       Alert.alert(
         '링크를 확인해 주세요',
@@ -2409,7 +2409,7 @@ export default function App() {
 
   function renderSave() {
     const saveLinkValid = isSaveLinkValid(url);
-    const saveLinkReady = saveLinkValid && !loading && !uploading;
+    const saveLinkReady = saveLinkValid && !submittingUrl && !uploading;
 
     return (
       <ScrollView
@@ -2508,7 +2508,7 @@ export default function App() {
             style={[styles.primaryButton, !saveLinkReady && styles.saveUxButtonDisabled]}
             onPress={saveUrl}
             disabled={!saveLinkReady || (submittingUrl || uploading)}
-           accessibilityRole="button" accessibilityState={{ disabled: !saveLinkReady || (submittingUrl || uploading), busy: loading }}>
+           accessibilityRole="button" accessibilityState={{ disabled: !saveLinkReady || submittingUrl || uploading, busy: submittingUrl }}>
             <BrandGradient variant="primary" radius={14} />
             <Ionicons
               name="bookmark-outline"
@@ -2521,7 +2521,7 @@ export default function App() {
             </Text>
           </Pressable>
 
-          {loading && (
+          {submittingUrl && (
             <View style={styles.saveUxProgress} accessibilityRole="progressbar">
               <ActivityIndicator color={theme.primary} size="small" />
               <Text style={styles.saveUxProgressText}>
