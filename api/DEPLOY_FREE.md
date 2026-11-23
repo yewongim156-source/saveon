@@ -48,6 +48,35 @@ The browser asks participants to type the evaluation code at first load and send
 
 **Before distributing publicly**, run a build/test, audit access restrictions, add per-visitor AI rate limits and verify the separate AI server works. The shared-code gate alone does not isolate student data.
 
+## Optional no-second-server AI mode (YouTube only)
+
+The web branch now contains `GeminiLiteService`, a **development/evaluation-only** direct Gemini path in Spring Boot. This replaces the `/analyze` and `/embed` calls to local FastAPI **only when** `SAVEON_AI_MODE=gemini-lite`. It does not deploy the complete original STT/OCR/CLIP pipeline and does not implement every agent endpoint.
+
+**Before enabling**, verify the exact Google AI Studio project and model show **Free Tier** and that **no billing account is linked**. If no unbilled free key is available, do not enable this mode. Never place this key in GitHub, Vercel or `EXPO_PUBLIC_*` variables.
+
+In Render **server-side** environment variables:
+
+- `SAVEON_AI_MODE=gemini-lite`
+- `GEMINI_API_KEY=<your unbilled FREE tier API key>` (secret)
+- `SAVEON_LITE_MODEL=gemini-3.5-flash-lite` (currently lists free-tier input/output; verify eligibility)
+- `SAVEON_LITE_DAILY_ANALYSES=20`
+- `SAVEON_EVALUATION_DAILY_SAVES=20`
+
+`SAVEON_AI_BASE_URL` is unused for `AiClient.analyze` and `AiClient.embed` in this mode, but **some other Agent clients still rely on the original FastAPI service**, so they may return fallbacks/errors. Do not claim full feature parity.
+
+This mode sends **public YouTube URL** to the Gemini Interactions API for video analysis and uses text embedding `gemini-embedding-001` (768 dimensions). It does not support Instagram URL analysis or file uploads. The access filter rejects `POST /api/v1/contents/upload` when hosted. Gemini free quotas and the instance-local per-day limit can stop analysis; the counter can reset after a free service restart. **Unbilled Free Tier project** is the relevant protection against unexpected Gemini charges, not an in-memory counter.
+
+After adding env variables, **manually deploy the latest `feature/web-evaluation-20261123` commit** (Auto-Deploy is off), confirm `/healthz` and test **one public YouTube short**. Rendering of structured analyses may be less complete than the original multimodal pipeline.
+
+For local confirmation without secrets, run:
+
+```sh
+cd api
+./gradlew test --no-daemon
+```
+
+The new tests check URL restrictions and fail-closed behavior, not live Google API service availability. No remote build/test has been run as part of creating these commits.
+
 ## Critical blockers
 
 1. **Do not publicize a live API yet.** The web branch has a shared evaluation-code gate and origin check but does not isolate student data. Use a disposable DB with informed participant consent, plus rate limiting before inviting users.
