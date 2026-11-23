@@ -13,21 +13,13 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Semaphore;
 
-/**
- * Lightweight, YouTube-only, cost-capped evaluation pipeline.
- *
- * Unlike the normal AI server, this mode does not download videos or execute
- * Whisper/EasyOCR/CLIP. It sends public YouTube URLs directly to the Gemini
- * Interactions API and uses a lightweight Gemini embedding API.
- *
- * Enable ONLY in the evaluation deployment with SAVEON_AI_MODE=gemini-lite and
- * a Gemini project verified to be on the FREE tier without billing enabled.
- */
+/** Gemini analysis for the evaluation deployment using an unbilled project. */
 @Service
 public class GeminiLiteService {
 
@@ -38,7 +30,7 @@ public class GeminiLiteService {
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
 
     private static final String VIDEO_PROMPT = """
-            이 공개 YouTube 쇼츠 영상을 실제로 보고 들은 내용에만 근거해 한국어 JSON을 작성하세요.
+            이 짧은 영상을 실제로 보고 들은 내용에만 근거해 한국어 JSON을 작성하세요.
             반드시 유효한 JSON 객체만 반환하며 마크다운/코드펜스는 사용하지 마세요.
             다음 형식:
             {
@@ -82,8 +74,27 @@ public class GeminiLiteService {
         this.maxDailyAnalyses = Math.max(0, Math.min(maxDailyAnalyses, 100));
     }
 
+    public AiAnalyzeResponse analyzeLink(String sourceUrl) {
+        String reelUrl = InstagramReelMedia.canonicalUrl(sourceUrl);
+        if (reelUrl == null) {
+            return analyzeYouTube(sourceUrl);
+        }
+        return analyzeVideo(() -> Map.of(
+                "type", "video",
+                "mime_type", "video/mp4",
+                "data", Base64.getEncoder().encodeToString(InstagramReelMedia.download(reelUrl))
+        ), "GEMINI_INSTAGRAM_EVALUATION");
+    }
+
     public AiAnalyzeResponse analyzeYouTube(String sourceUrl) {
         validateYouTubeUrl(sourceUrl);
+        return analyzeVideo(() -> Map.of("type", "video", "uri", sourceUrl),
+                "GEMINI_YOUTUBE_EVALUATION");
+    }
+
+    private AiAnalyzeResponse analyzeVideo(
+            java.util.function.Supplier<Map<String, Object>> videoInput, String method
+    ) {
         ensureKey();
         if (!analysisSlots.tryAcquire()) {
             throw new IllegalStateException("다른 영상을 분석 중입니다. 잠시 후 다시 시도해 주세요.");
@@ -94,7 +105,7 @@ public class GeminiLiteService {
                     "model", model,
                     "store", false,
                     "input", List.of(
-                            Map.of("type", "video", "uri", sourceUrl),
+                            videoInput.get(),
                             Map.of("type", "text", "text", VIDEO_PROMPT)
                     )
             );
@@ -104,7 +115,7 @@ public class GeminiLiteService {
             String jsonText = extractJson(output);
             Map<String, Object> parsed = mapper.readValue(jsonText, Map.class);
 
-            String title = fieldText(parsed.get("title"), "저장한 YouTube 영상");
+            String title = fieldText(parsed.get("title"), "저장한 영상");
             String summary = fieldText(parsed.get("summary"), "");
             if (summary.isBlank()) {
                 throw new IllegalStateException("영상 요약이 비어 있습니다.");
@@ -118,7 +129,7 @@ public class GeminiLiteService {
                     if (key instanceof String name) structured.put(name, value);
                 });
             }
-            structured.put("analysisMethod", "GEMINI_YOUTUBE_EVALUATION");
+            structured.put("analysisMethod", method);
             structured.put("externalFactCheckPerformed", false);
             structured.put("evidenceSource", "Gemini video understanding");
             return new AiAnalyzeResponse(
@@ -126,7 +137,7 @@ public class GeminiLiteService {
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
-            throw new IllegalStateException("무료 YouTube 분석을 완료하지 못했습니다.", e);
+            throw new IllegalStateException("영상 분석을 완료하지 못했습니다.", e);
         } finally {
             analysisSlots.release();
         }

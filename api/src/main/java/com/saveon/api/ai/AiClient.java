@@ -42,7 +42,7 @@ public class AiClient {
     public AiAnalyzeResponse analyze(String sourceUrl, Long contentId,
             boolean thumbnailRequested) {
         if ("gemini-lite".equalsIgnoreCase(aiMode)) {
-            return geminiLiteService.analyzeYouTube(sourceUrl);
+            return geminiLiteService.analyzeLink(sourceUrl);
         }
         HttpURLConnection connection = null;
 
